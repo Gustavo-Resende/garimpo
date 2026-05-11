@@ -1,0 +1,96 @@
+services:
+  garimpo:
+    build: .
+    container_name: garimpo
+    restart: always
+    environment:
+      - SHOPEE_APP_ID=${SHOPEE_APP_ID}
+      - SHOPEE_SECRET=${SHOPEE_SECRET}
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - EVOLUTION_API_URL=http://evolution_api:8080
+      - EVOLUTION_API_KEY=${EVOLUTION_API_KEY}
+      - EVOLUTION_INSTANCE_NAME=${EVOLUTION_INSTANCE_NAME}
+      - EVOLUTION_GROUP_JID=${EVOLUTION_GROUP_JID}
+      - MIN_COMMISSION=${MIN_COMMISSION:-0.08}
+      - EXTRACTION_INTERVAL_HOURS=${EXTRACTION_INTERVAL_HOURS:-4}
+      - POSTING_INTERVAL_MINUTES=${POSTING_INTERVAL_MINUTES:-12}
+      - POSTING_START_HOUR=${POSTING_START_HOUR:-7}
+      - POSTING_END_HOUR=${POSTING_END_HOUR:-23}
+      - DB_PATH=/app/garimpo.db
+    volumes:
+      - garimpo_data:/app
+    depends_on:
+      evolution_api:
+        condition: service_started
+      postgres:
+        condition: service_healthy
+
+  evolution_api:
+    image: atendai/evolution-api:v2.2.3
+    container_name: evolution_api
+    restart: always
+    ports:
+      - "8080:8080"
+    dns:
+      - 8.8.8.8
+      - 8.8.4.4
+    volumes:
+      - evolution_instances:/evolution/instances
+    environment:
+      - SERVER_URL=http://localhost:8080
+      - AUTHENTICATION_API_KEY=garimpo_evolution_key_2024
+      - AUTHENTICATION_EXPOSE_IN_FETCH_INSTANCES=true
+      - DEL_INSTANCE=false
+      - QRCODE_LIMIT=10
+      - DATABASE_ENABLED=true
+      - DATABASE_PROVIDER=postgresql
+      - DATABASE_CONNECTION_URI=postgresql://evolution:evolution@postgres:5432/evolution
+      - DATABASE_CONNECTION_CLIENT_NAME=evolution_api
+      - DATABASE_SAVE_DATA_INSTANCE=true
+      - DATABASE_SAVE_DATA_NEW_MESSAGE=true
+      - DATABASE_SAVE_MESSAGE_UPDATE=true
+      - DATABASE_SAVE_DATA_CONTACTS=true
+      - DATABASE_SAVE_DATA_CHATS=true
+      - CONFIG_SESSION_PHONE_VERSION=2.3000.1039201455
+      - CACHE_REDIS_ENABLED=true
+      - CACHE_REDIS_URI=redis://redis:6379/1
+      - CACHE_REDIS_PREFIX_KEY=evolution
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: evolution_postgres
+    restart: always
+    environment:
+      - POSTGRES_USER=evolution
+      - POSTGRES_PASSWORD=evolution
+      - POSTGRES_DB=evolution
+    volumes:
+      - evolution_postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U evolution"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: evolution_redis
+    restart: always
+    volumes:
+      - evolution_redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  garimpo_data:
+  evolution_instances:
+  evolution_postgres:
+  evolution_redis:
