@@ -1,0 +1,120 @@
+package queue
+
+import (
+	"database/sql"
+	"time"
+)
+
+type Product struct {
+	ID        int
+	Title     string
+	Price     float64
+	Discount  int
+	Commission float64
+	ImageURL  string
+	OfferLink string
+	Source    string
+	Status    string
+	CreatedAt time.Time
+	SentAt    *time.Time
+}
+
+type Queue struct {
+	db *sql.DB
+}
+
+func NewQueue(db *sql.DB) *Queue {
+	return &Queue{db: db}
+}
+
+func Migrate(db *sql.DB) error {
+	_, err := db.Exec(`CREATE TABLE IF NOT EXISTS queue (
+		id           INTEGER PRIMARY KEY AUTOINCREMENT,
+		title        TEXT NOT NULL,
+		price        REAL NOT NULL,
+		discount     INTEGER,
+		commission   REAL NOT NULL,
+		image_url    TEXT,
+		offer_link   TEXT NOT NULL UNIQUE,
+		source       TEXT NOT NULL DEFAULT 'shopee',
+		status       TEXT NOT NULL DEFAULT 'pending',
+		created_at   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		sent_at      DATETIME
+	)`)
+	return err
+}
+
+// Enqueue insere o produto na fila. Retorna (true, nil) se inserido, (false, nil) se já existia.
+func (q *Queue) Enqueue(p Product) (bool, error) {
+	stmt, err := q.db.Prepare(`INSERT OR IGNORE INTO queue
+		(title, price, discount, commission, image_url, offer_link, source)
+		VALUES (?, ?, ?, ?, ?, ?, ?)`)
+	if err != nil {
+		return false, err
+	}
+	defer stmt.Close()
+
+	source := p.Source
+	if source == "" {
+		source = "shopee"
+	}
+
+	result, err := stmt.Exec(p.Title, p.Price, p.Discount, p.Commission, p.ImageURL, p.OfferLink, source)
+	if err != nil {
+		return false, err
+	}
+	rows, err := result.RowsAffected()
+	return rows > 0, err
+}
+
+func (q *Queue) Dequeue() (*Product, error) {
+	stmt, err := q.db.Prepare(`SELECT id, title, price, discount, commission, image_url, offer_link, source, status, created_at, sent_at
+		FROM queue WHERE status = 'pending' ORDER BY created_at ASC LIMIT 1`)
+	if err != nil {
+		return nil, err
+	}
+	defer stmt.Close()
+
+	var p Product
+	var sentAt sql.NullTime
+	err = stmt.QueryRow().Scan(
+		&p.ID, &p.Title, &p.Price, &p.Discount, &p.Commission,
+		&p.ImageURL, &p.OfferLink, &p.Source, &p.Status, &p.CreatedAt, &sentAt,
+	)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if sentAt.Valid {
+		p.SentAt = &sentAt.Time
+	}
+	return &p, nil
+}
+
+func (q *Queue) MarkSent(id int) error {
+	stmt, err := q.db.Prepare(`UPDATE queue SET status = 'sent', sent_at = CURRENT_TIMESTAMP WHERE id = ?`)
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+	_, err = stmt.Exec(id)
+	return err
+}
+
+func (q *Queue) MarkFailed(id int) error {
+	stmt, err := q.db.Prepare(`UPDATE queue SET status = 'failed' WHERE id = ?`)
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+	_, err = stmt.Exec(id)
+	return err
+}
+
+func (q *Queue) CountPending() (int, error) {
+	var count int
+	err := q.db.QueryRow(`SELECT COUNT(*) FROM queue WHERE status = 'pending'`).Scan(&count)
+	return count, err
+}
