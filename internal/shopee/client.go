@@ -8,12 +8,27 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"slices"
 	"strconv"
+	"strings"
 	"time"
 )
 
 const apiURL = "https://open-api.affiliate.shopee.com.br/graphql"
 
+// allowedCategories lista os catIds permitidos para filtragem.
+// Só é usado se o campo catId estiver disponível na API.
+var allowedCategories = []int{
+	11059983, // Casa e Construção
+	11059984, // Eletrodomésticos
+	11059998, // Roupas Femininas
+	11059986, // Roupas Masculinas
+	11059992, // Esportes e Lazer
+	11059974, // Beleza
+	11059981, // Saúde
+	11059989, // Mãe e Bebê
+	11059991, // Animais Domésticos
+}
 
 type FilterConfig struct {
 	MinCommission float64
@@ -65,7 +80,7 @@ type ProductNode struct {
 	CommissionRate    float64
 	Commission        float64
 	ShopName          string
-	CategoryIds       []int
+	CatId             int
 	ShopType          []int
 }
 
@@ -84,7 +99,7 @@ type productNodeRaw struct {
 	CommissionRate    string `json:"commissionRate"`
 	Commission        string `json:"commission"`
 	ShopName          string `json:"shopName"`
-	CategoryIds       []int  `json:"categoryIds"`
+	CatId             int    `json:"catId"`
 	ShopType          []int  `json:"shopType"`
 }
 
@@ -108,7 +123,7 @@ func (r productNodeRaw) toProductNode() ProductNode {
 		CommissionRate:    parseFloat(r.CommissionRate),
 		Commission:        parseFloat(r.Commission),
 		ShopName:          r.ShopName,
-		CategoryIds:       r.CategoryIds,
+		CatId:             r.CatId,
 		ShopType:          r.ShopType,
 	}
 }
@@ -129,22 +144,60 @@ type productOfferResponse struct {
 	} `json:"errors"`
 }
 
-func (c *Client) FetchProducts(cfg FilterConfig, limit int) ([]ProductNode, error) {
-	query := fmt.Sprintf(`{"query":"{ productOfferV2(sortType: 2, page: 1, limit: %d) { nodes { itemId productName productLink offerLink imageUrl priceMin priceMax priceDiscountRate sales ratingStar commissionRate commission shopName } pageInfo { page limit hasNextPage } } }"}`, limit)
-
-	var lastErr error
-	for range 3 {
-		nodes, err := c.doFetch(query, cfg)
-		if err == nil {
-			return nodes, nil
-		}
-		lastErr = err
+func buildQuery(limit int, withCatId, withShopType bool) string {
+	extra := ""
+	if withCatId {
+		extra += " catId"
 	}
-	return nil, lastErr
+	if withShopType {
+		extra += " shopType"
+	}
+	return fmt.Sprintf(
+		`{"query":"{ productOfferV2(sortType: 2, page: 1, limit: %d) { nodes { itemId productName productLink offerLink imageUrl priceMin priceMax priceDiscountRate sales ratingStar commissionRate commission shopName%s } pageInfo { page limit hasNextPage } } }"}`,
+		limit, extra,
+	)
 }
 
+// isSchemaError verifica se o erro da API é sobre um campo inexistente no schema.
+func isSchemaError(err error, field string) bool {
+	return err != nil && strings.Contains(err.Error(), `"`+field+`"`)
+}
 
-func (c *Client) doFetch(query string, cfg FilterConfig) ([]ProductNode, error) {
+func (c *Client) FetchProducts(cfg FilterConfig, limit int) ([]ProductNode, error) {
+	// Tenta primeiro com catId + shopType para investigar ambos os campos.
+	query := buildQuery(limit, true, true)
+	nodes, catIdOk, err := c.fetchWithFallback(query, cfg, limit)
+	if err != nil {
+		return nil, err
+	}
+	if !catIdOk {
+		slog.Warn("shopee: campo catId não existe no schema, filtro de categoria desativado")
+	}
+	return nodes, nil
+}
+
+// fetchWithFallback tenta buscar com catId; se a API rejeitar o campo, refaz sem ele.
+// Retorna os produtos, se catId estava disponível, e o erro.
+func (c *Client) fetchWithFallback(query string, cfg FilterConfig, limit int) ([]ProductNode, bool, error) {
+	nodes, err := c.doFetch(query, cfg, true)
+	if err == nil {
+		return nodes, true, nil
+	}
+
+	if isSchemaError(err, "catId") {
+		// catId não existe: refaz sem ele mas mantém shopType para logar valores.
+		fallback := buildQuery(limit, false, true)
+		nodes, err = c.doFetch(fallback, cfg, false)
+		if err != nil {
+			return nil, false, err
+		}
+		return nodes, false, nil
+	}
+
+	return nil, false, err
+}
+
+func (c *Client) doFetch(query string, cfg FilterConfig, applyCatFilter bool) ([]ProductNode, error) {
 	req, err := http.NewRequest(http.MethodPost, apiURL, bytes.NewBufferString(query))
 	if err != nil {
 		return nil, fmt.Errorf("shopee: build request: %w", err)
@@ -177,11 +230,14 @@ func (c *Client) doFetch(query string, cfg FilterConfig) ([]ProductNode, error) 
 	}
 
 	total := len(result.Data.ProductOfferV2.Nodes)
-	passedMinCommission, passedSales, passedRating, passedMaxCommission := 0, 0, 0, 0
+	passedMinCommission, passedSales, passedRating, passedMaxCommission, passedCategory := 0, 0, 0, 0, 0
 
 	var filtered []ProductNode
 	for _, n := range result.Data.ProductOfferV2.Nodes {
 		p := n.toProductNode()
+
+		// Loga shopType de cada produto para investigação do range de valores.
+		slog.Debug("shopee: produto", "name", p.ProductName, "catId", p.CatId, "shopType", p.ShopType)
 
 		if p.CommissionRate < cfg.MinCommission {
 			continue
@@ -203,6 +259,11 @@ func (c *Client) doFetch(query string, cfg FilterConfig) ([]ProductNode, error) 
 		}
 		passedMaxCommission++
 
+		if applyCatFilter && !slices.Contains(allowedCategories, p.CatId) {
+			continue
+		}
+		passedCategory++
+
 		filtered = append(filtered, p)
 	}
 
@@ -212,6 +273,7 @@ func (c *Client) doFetch(query string, cfg FilterConfig) ([]ProductNode, error) 
 		"passou_sales", passedSales,
 		"passou_rating", passedRating,
 		"passou_max_commission", passedMaxCommission,
+		"passou_categoria", passedCategory,
 		"final", len(filtered),
 	)
 
