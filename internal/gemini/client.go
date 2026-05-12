@@ -16,21 +16,24 @@ const apiURL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2
 
 const promptTemplate = `Você é um especialista em marketing de afiliados. Gere uma caption curta para acompanhar a imagem de um produto no WhatsApp.
 
-Formato obrigatório (use exatamente 4 blocos separados por linha em branco):
-[nome do produto simples e direto, com emoji relevante]
+Formato obrigatório (4 linhas separadas por \n\n):
+[Nome do produto limpo e curto, com emoji temático no final]
 
-[preço e desconto em destaque, ex: "💰 R$ 49,90 — 40%% OFF"]
+💰 R$ [preço] — [desconto]%% OFF
 
-[uma linha curta e animada sobre o produto, máximo 1 linha]
+[Frase curta de benefício ou urgência, máximo 1 linha, informal]
 
-[link]
+👉 [link]
 
-Regras:
-- O link deve ser a última linha, sozinho, sem nenhum texto antes dele
-- Nunca usar frases como "Garanta o seu aqui:", "Acesse:", "Clique aqui:" antes do link
-- Tom informal em português brasileiro
-- Não inventar informações que não foram passadas
-- O texto vai como caption de imagem, deve ser curto e direto
+Regras obrigatórias:
+1. Nome limpo e curto — remova palavras repetidas, siglas técnicas desnecessárias e texto em caixa alta desnecessário. Ex: "Kit Macacão Bebê Algodão 👶" em vez de "Kit 5 Macacão Menina Liso Bebê Algodão Zíper Vira Pé Inverno Infantil Macio Macacões"
+2. Emoji temático no final do nome — deve combinar com o produto, não ser genérico
+3. Linha do preço sempre começa com 💰
+4. Frase de benefício curta, direta, sem exagero
+5. Link sempre na última linha, precedido de 👉, sem nenhum texto depois
+6. Separar cada bloco com \n\n
+7. Tom informal em português brasileiro
+8. Não inventar informações que não foram passadas
 
 Dados do produto:
 Nome: %s
