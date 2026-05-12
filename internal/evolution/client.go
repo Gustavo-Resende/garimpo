@@ -29,15 +29,18 @@ func NewClient(baseURL, apiKey, instanceName, groupJID string) *Client {
 	}
 }
 
-type sendTextBody struct {
-	Number string `json:"number"`
-	Text   string `json:"text"`
+type sendMediaBody struct {
+	Number    string `json:"number"`
+	MediaType string `json:"mediatype"`
+	MimeType  string `json:"mimetype"`
+	Media     string `json:"media"`
+	Caption   string `json:"caption"`
 }
 
-func (c *Client) SendMessage(text string) error {
+func (c *Client) SendMessage(imageURL, text string) error {
 	var lastErr error
 	for range 3 {
-		if err := c.doSend(text); err == nil {
+		if err := c.doSend(imageURL, text); err == nil {
 			return nil
 		} else {
 			lastErr = err
@@ -46,10 +49,13 @@ func (c *Client) SendMessage(text string) error {
 	return lastErr
 }
 
-func (c *Client) doSend(text string) error {
-	body := sendTextBody{
-		Number: c.groupJID,
-		Text:   text,
+func (c *Client) doSend(imageURL, text string) error {
+	body := sendMediaBody{
+		Number:    c.groupJID,
+		MediaType: "image",
+		MimeType:  "image/jpeg",
+		Media:     imageURL,
+		Caption:   text,
 	}
 
 	payload, err := json.Marshal(body)
@@ -57,7 +63,7 @@ func (c *Client) doSend(text string) error {
 		return fmt.Errorf("evolution: marshal body: %w", err)
 	}
 
-	url := fmt.Sprintf("%s/message/sendText/%s", c.baseURL, c.instanceName)
+	url := fmt.Sprintf("%s/message/sendMedia/%s", c.baseURL, c.instanceName)
 	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(payload))
 	if err != nil {
 		return fmt.Errorf("evolution: build request: %w", err)

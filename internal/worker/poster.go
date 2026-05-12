@@ -44,7 +44,7 @@ func RunPoster(q *queue.Queue, gem *gemini.Client, evo *evolution.Client, cfg Po
 
 		log.Info("poster: mensagem gerada", "id", product.ID, "msg", msg)
 
-		if err := evo.SendMessage(msg); err != nil {
+		if err := evo.SendMessage(product.ImageURL, msg); err != nil {
 			log.Error("poster: SendMessage", "id", product.ID, "err", err)
 			if markErr := q.MarkFailed(product.ID); markErr != nil {
 				log.Error("poster: MarkFailed", "id", product.ID, "err", markErr)

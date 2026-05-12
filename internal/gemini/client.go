@@ -14,15 +14,23 @@ import (
 const (
 	apiURL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent"
 
-	promptTemplate = `Você é um especialista em marketing de afiliados. Crie uma mensagem curta e animada para divulgar o produto abaixo em um grupo de WhatsApp.
+	promptTemplate = `Você é um especialista em marketing de afiliados. Gere uma caption curta para acompanhar a imagem de um produto no WhatsApp.
+
+Formato obrigatório (use exatamente 4 blocos separados por linha em branco):
+[nome do produto simples e direto, com emoji relevante]
+
+[preço e desconto em destaque, ex: "💰 R$ 49,90 — 40%% OFF"]
+
+[uma linha curta e animada sobre o produto, máximo 1 linha]
+
+[link]
 
 Regras:
-- Linguagem informal e animada, português brasileiro
-- Use emojis relevantes
-- Destaque o desconto e a urgência se houver desconto
-- Máximo 5 linhas no total
-- Inclua o link de afiliado no final
-- Não invente informações que não foram fornecidas
+- O link deve ser a última linha, sozinho, sem nenhum texto antes dele
+- Nunca usar frases como "Garanta o seu aqui:", "Acesse:", "Clique aqui:" antes do link
+- Tom informal em português brasileiro
+- Não inventar informações que não foram passadas
+- O texto vai como caption de imagem, deve ser curto e direto
 
 Dados do produto:
 Nome: %s
