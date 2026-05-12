@@ -44,7 +44,7 @@ func RunExtractor(shopeeClient *shopee.Client, geminiClient *gemini.Client, q *q
 
 			inserted, err := q.Enqueue(queue.Product{
 				Title:      p.ProductName,
-				Price:      p.PriceMin,
+				Price:      p.PriceMax,
 				Discount:   p.PriceDiscountRate,
 				Commission: p.CommissionRate,
 				ImageURL:   p.ImageURL,
