@@ -97,7 +97,7 @@ func main() {
 			MinRating:     minRating,
 		},
 		ExtractionInterval: time.Duration(extractionHours) * time.Hour,
-		FetchLimit:         20,
+		FetchLimit:         envInt("SHOPEE_PRODUCT_LIMIT", 50),
 	}
 	posterCfg := worker.PosterConfig{
 		PostingInterval: time.Duration(postingMinutes) * time.Minute,
@@ -111,7 +111,7 @@ func main() {
 		"min_commission", minCommission,
 	)
 
-	go worker.RunExtractor(shopeeClient, q, extractorCfg, log)
+	go worker.RunExtractor(shopeeClient, geminiClient, q, extractorCfg, log)
 	go worker.RunPoster(q, geminiClient, evolutionClient, posterCfg, log)
 
 	select {}

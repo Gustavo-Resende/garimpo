@@ -6,15 +6,15 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/Gustavo-Resende/garimpo/internal/queue"
 )
 
-const (
-	apiURL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent"
+const apiURL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent"
 
-	promptTemplate = `Você é um especialista em marketing de afiliados. Gere uma caption curta para acompanhar a imagem de um produto no WhatsApp.
+const promptTemplate = `Você é um especialista em marketing de afiliados. Gere uma caption curta para acompanhar a imagem de um produto no WhatsApp.
 
 Formato obrigatório (use exatamente 4 blocos separados por linha em branco):
 [nome do produto simples e direto, com emoji relevante]
@@ -37,7 +37,32 @@ Nome: %s
 Preço: R$ %.2f
 Desconto: %d%%
 Link: %s`
-)
+
+const evalPromptTemplate = `Você é um curador de ofertas para um grupo de WhatsApp brasileiro de achadinhos.
+Avalie se o produto abaixo é adequado para divulgação.
+Produtos ADEQUADOS:
+- Itens de casa e cozinha (utensílios, potes, organizadores)
+- Eletrodomésticos pequenos (air fryer, micro-ondas, chaleira, panela elétrica)
+- Roupas de academia (dry fit, legging, shorts esportivos)
+- Moda masculina e feminina em tendência (oversized, cargo, streetwear)
+- Beleza e cuidados pessoais (skincare, perfumes, cabelo, barba)
+- Esportes e academia (equipamentos, tênis, garrafa d'água, óculos)
+- Pets (acessórios, alimentação)
+- Saúde (suplementos, equipamentos)
+- Mãe e bebê
+
+Produtos INADEQUADOS:
+- Games, consoles, controles (PlayStation, Xbox, Nintendo)
+- Informática cara (notebooks, monitores, placas de vídeo)
+- Grandes eletrodomésticos (geladeira, fogão, máquina de lavar, ar condicionado)
+- Peças e acessórios para carros ou motos
+- Instrumentos musicais
+- Produtos sem apelo popular ou muito nichados
+
+Responda APENAS com JSON válido, sem texto adicional:
+{"aprovado": true} ou {"aprovado": false, "motivo": "..."}
+Produto: %s
+Preço: R$ %.2f`
 
 type Client struct {
 	apiKey     string
@@ -54,7 +79,12 @@ func NewClient(apiKey string) *Client {
 }
 
 type geminiRequest struct {
-	Contents []geminiContent `json:"contents"`
+	Contents         []geminiContent   `json:"contents"`
+	GenerationConfig *generationConfig `json:"generationConfig,omitempty"`
+}
+
+type generationConfig struct {
+	ResponseMIMEType string `json:"responseMimeType,omitempty"`
 }
 
 type geminiContent struct {
@@ -78,37 +108,18 @@ type geminiResponse struct {
 	} `json:"error"`
 }
 
-func (c *Client) GenerateMessage(p queue.Product) (string, error) {
-	prompt := fmt.Sprintf(promptTemplate,
-		p.Title,
-		p.Price,
-		p.Discount,
-		p.OfferLink,
-	)
+type evalResult struct {
+	Aprovado bool   `json:"aprovado"`
+	Motivo   string `json:"motivo"`
+}
 
-	body := geminiRequest{
-		Contents: []geminiContent{
-			{Parts: []geminiPart{{Text: prompt}}},
-		},
-	}
-
+// callAPI executa o POST para a API Gemini e retorna o texto da resposta.
+func (c *Client) callAPI(body geminiRequest) (string, error) {
 	payload, err := json.Marshal(body)
 	if err != nil {
 		return "", fmt.Errorf("gemini: marshal request: %w", err)
 	}
 
-	var lastErr error
-	for range 3 {
-		msg, err := c.doGenerate(payload)
-		if err == nil {
-			return msg, nil
-		}
-		lastErr = err
-	}
-	return "", lastErr
-}
-
-func (c *Client) doGenerate(payload []byte) (string, error) {
 	url := apiURL + "?key=" + c.apiKey
 	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(payload))
 	if err != nil {
@@ -122,17 +133,17 @@ func (c *Client) doGenerate(payload []byte) (string, error) {
 	}
 	defer resp.Body.Close()
 
-	body, err := io.ReadAll(resp.Body)
+	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return "", fmt.Errorf("gemini: read body: %w", err)
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("gemini: unexpected status %d: %s", resp.StatusCode, body)
+		return "", fmt.Errorf("gemini: unexpected status %d: %s", resp.StatusCode, respBody)
 	}
 
 	var result geminiResponse
-	if err := json.Unmarshal(body, &result); err != nil {
+	if err := json.Unmarshal(respBody, &result); err != nil {
 		return "", fmt.Errorf("gemini: decode response: %w", err)
 	}
 
@@ -145,4 +156,62 @@ func (c *Client) doGenerate(payload []byte) (string, error) {
 	}
 
 	return result.Candidates[0].Content.Parts[0].Text, nil
+}
+
+func (c *Client) GenerateMessage(p queue.Product) (string, error) {
+	prompt := fmt.Sprintf(promptTemplate, p.Title, p.Price, p.Discount, p.OfferLink)
+	body := geminiRequest{
+		Contents: []geminiContent{{Parts: []geminiPart{{Text: prompt}}}},
+	}
+
+	var lastErr error
+	for range 3 {
+		msg, err := c.callAPI(body)
+		if err == nil {
+			return msg, nil
+		}
+		lastErr = err
+	}
+	return "", lastErr
+}
+
+// EvaluateProduct avalia se um produto é adequado para divulgação.
+// Retorna (aprovado, motivo, erro). Em caso de erro, o caller decide se enfileira mesmo assim.
+func (c *Client) EvaluateProduct(title string, price float64) (bool, string, error) {
+	prompt := fmt.Sprintf(evalPromptTemplate, title, price)
+	body := geminiRequest{
+		Contents:         []geminiContent{{Parts: []geminiPart{{Text: prompt}}}},
+		GenerationConfig: &generationConfig{ResponseMIMEType: "application/json"},
+	}
+
+	var lastErr error
+	for range 3 {
+		approved, motivo, err := c.doEvaluate(body)
+		if err == nil {
+			return approved, motivo, nil
+		}
+		lastErr = err
+	}
+	return false, "", lastErr
+}
+
+func (c *Client) doEvaluate(body geminiRequest) (bool, string, error) {
+	text, err := c.callAPI(body)
+	if err != nil {
+		return false, "", err
+	}
+
+	// Limpa eventual markdown code fence caso o modelo ignore a instrução.
+	text = strings.TrimSpace(text)
+	text = strings.TrimPrefix(text, "```json")
+	text = strings.TrimPrefix(text, "```")
+	text = strings.TrimSuffix(text, "```")
+	text = strings.TrimSpace(text)
+
+	var result evalResult
+	if err := json.Unmarshal([]byte(text), &result); err != nil {
+		return false, "", fmt.Errorf("gemini: parse eval response %q: %w", text, err)
+	}
+
+	return result.Aprovado, result.Motivo, nil
 }

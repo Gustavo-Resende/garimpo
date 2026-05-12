@@ -4,6 +4,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/Gustavo-Resende/garimpo/internal/gemini"
 	"github.com/Gustavo-Resende/garimpo/internal/queue"
 	"github.com/Gustavo-Resende/garimpo/internal/shopee"
 )
@@ -14,16 +15,33 @@ type ExtractorConfig struct {
 	FetchLimit         int
 }
 
-func RunExtractor(client *shopee.Client, q *queue.Queue, cfg ExtractorConfig, log *slog.Logger) {
+func RunExtractor(shopeeClient *shopee.Client, geminiClient *gemini.Client, q *queue.Queue, cfg ExtractorConfig, log *slog.Logger) {
 	run := func() {
-		products, err := client.FetchProducts(cfg.FilterConfig, cfg.FetchLimit)
+		products, err := shopeeClient.FetchProducts(cfg.FilterConfig, cfg.FetchLimit)
 		if err != nil {
 			log.Error("extractor: FetchProducts", "err", err)
 			return
 		}
 
-		added, skipped := 0, 0
+		added, skipped, aiRejected, aiError := 0, 0, 0, 0
 		for _, p := range products {
+			approved, motivo, err := geminiClient.EvaluateProduct(p.ProductName, p.PriceMin)
+			if err != nil {
+				log.Error("extractor: EvaluateProduct", "product", p.ProductName, "err", err)
+				aiError++
+				// falha na IA não bloqueia — enfileira mesmo assim
+			} else {
+				log.Info("extractor: produto avaliado",
+					"title", p.ProductName,
+					"aprovado", approved,
+					"motivo", motivo,
+				)
+				if !approved {
+					aiRejected++
+					continue
+				}
+			}
+
 			inserted, err := q.Enqueue(queue.Product{
 				Title:      p.ProductName,
 				Price:      p.PriceMin,
@@ -44,7 +62,12 @@ func RunExtractor(client *shopee.Client, q *queue.Queue, cfg ExtractorConfig, lo
 			}
 		}
 
-		log.Info("extractor: ciclo concluído", "adicionados", added, "ignorados", skipped)
+		log.Info("extractor: ciclo concluído",
+			"adicionados", added,
+			"ignorados", skipped,
+			"reprovados_ia", aiRejected,
+			"erros_ia", aiError,
+		)
 	}
 
 	run()

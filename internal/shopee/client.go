@@ -139,7 +139,12 @@ func hasValidShopType(shopType []int) bool {
 	return false
 }
 
+const maxAPILimit = 50
+
 func (c *Client) FetchProducts(cfg FilterConfig, limit int) ([]ProductNode, error) {
+	if limit > maxAPILimit {
+		limit = maxAPILimit
+	}
 	query := fmt.Sprintf(
 		`{"query":"{ productOfferV2(sortType: 2, page: 1, limit: %d) { nodes { itemId productName productLink offerLink imageUrl priceMin priceMax priceDiscountRate sales ratingStar commissionRate commission shopName shopType } pageInfo { page limit hasNextPage } } }"}`,
 		limit,
