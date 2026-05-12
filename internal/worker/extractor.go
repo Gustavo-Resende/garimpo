@@ -9,14 +9,14 @@ import (
 )
 
 type ExtractorConfig struct {
-	MinCommission      float64
+	FilterConfig       shopee.FilterConfig
 	ExtractionInterval time.Duration
 	FetchLimit         int
 }
 
 func RunExtractor(client *shopee.Client, q *queue.Queue, cfg ExtractorConfig, log *slog.Logger) {
 	run := func() {
-		products, err := client.FetchProducts(cfg.MinCommission, cfg.FetchLimit)
+		products, err := client.FetchProducts(cfg.FilterConfig, cfg.FetchLimit)
 		if err != nil {
 			log.Error("extractor: FetchProducts", "err", err)
 			return

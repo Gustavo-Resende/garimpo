@@ -64,6 +64,9 @@ func main() {
 	dbPath           := mustEnv("DB_PATH")
 
 	minCommission   := envFloat("MIN_COMMISSION", 0.08)
+	maxCommission   := envFloat("MAX_COMMISSION", 0.40)
+	minSales        := envInt("MIN_SALES", 500)
+	minRating       := envFloat("MIN_RATING", 4.0)
 	extractionHours := envInt("EXTRACTION_INTERVAL_HOURS", 4)
 	postingMinutes  := envInt("POSTING_INTERVAL_MINUTES", 12)
 	startHour       := envInt("POSTING_START_HOUR", 7)
@@ -87,7 +90,12 @@ func main() {
 	evolutionClient := evolution.NewClient(evolutionURL, evolutionKey, evolutionInstance, evolutionGroup)
 
 	extractorCfg := worker.ExtractorConfig{
-		MinCommission:      minCommission,
+		FilterConfig: shopee.FilterConfig{
+			MinCommission: minCommission,
+			MaxCommission: maxCommission,
+			MinSales:      minSales,
+			MinRating:     minRating,
+		},
 		ExtractionInterval: time.Duration(extractionHours) * time.Hour,
 		FetchLimit:         20,
 	}

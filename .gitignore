@@ -1,6 +1,6 @@
 .env
 garimpo.db
-garimpo
-garimpo.exe
+/garimpo
+/garimpo.exe
 PLAN.md
 CLAUDE.md

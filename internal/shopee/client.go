@@ -6,12 +6,21 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"time"
 )
 
 const apiURL = "https://open-api.affiliate.shopee.com.br/graphql"
+
+
+type FilterConfig struct {
+	MinCommission float64
+	MaxCommission float64
+	MinSales      int
+	MinRating     float64
+}
 
 type Client struct {
 	appID      string
@@ -56,6 +65,8 @@ type ProductNode struct {
 	CommissionRate    float64
 	Commission        float64
 	ShopName          string
+	CategoryIds       []int
+	ShopType          []int
 }
 
 // productNodeRaw mapeia exatamente o JSON da API (itemId é number, demais monetários são strings)
@@ -73,6 +84,8 @@ type productNodeRaw struct {
 	CommissionRate    string `json:"commissionRate"`
 	Commission        string `json:"commission"`
 	ShopName          string `json:"shopName"`
+	CategoryIds       []int  `json:"categoryIds"`
+	ShopType          []int  `json:"shopType"`
 }
 
 func parseFloat(s string) float64 {
@@ -95,6 +108,8 @@ func (r productNodeRaw) toProductNode() ProductNode {
 		CommissionRate:    parseFloat(r.CommissionRate),
 		Commission:        parseFloat(r.Commission),
 		ShopName:          r.ShopName,
+		CategoryIds:       r.CategoryIds,
+		ShopType:          r.ShopType,
 	}
 }
 
@@ -114,12 +129,12 @@ type productOfferResponse struct {
 	} `json:"errors"`
 }
 
-func (c *Client) FetchProducts(minCommission float64, limit int) ([]ProductNode, error) {
+func (c *Client) FetchProducts(cfg FilterConfig, limit int) ([]ProductNode, error) {
 	query := fmt.Sprintf(`{"query":"{ productOfferV2(sortType: 2, page: 1, limit: %d) { nodes { itemId productName productLink offerLink imageUrl priceMin priceMax priceDiscountRate sales ratingStar commissionRate commission shopName } pageInfo { page limit hasNextPage } } }"}`, limit)
 
 	var lastErr error
-	for attempt := 0; attempt < 3; attempt++ {
-		nodes, err := c.doFetch(query, minCommission)
+	for range 3 {
+		nodes, err := c.doFetch(query, cfg)
 		if err == nil {
 			return nodes, nil
 		}
@@ -128,7 +143,8 @@ func (c *Client) FetchProducts(minCommission float64, limit int) ([]ProductNode,
 	return nil, lastErr
 }
 
-func (c *Client) doFetch(query string, minCommission float64) ([]ProductNode, error) {
+
+func (c *Client) doFetch(query string, cfg FilterConfig) ([]ProductNode, error) {
 	req, err := http.NewRequest(http.MethodPost, apiURL, bytes.NewBufferString(query))
 	if err != nil {
 		return nil, fmt.Errorf("shopee: build request: %w", err)
@@ -160,12 +176,44 @@ func (c *Client) doFetch(query string, minCommission float64) ([]ProductNode, er
 		return nil, fmt.Errorf("shopee: api error: %s", result.Errors[0].Message)
 	}
 
+	total := len(result.Data.ProductOfferV2.Nodes)
+	passedMinCommission, passedSales, passedRating, passedMaxCommission := 0, 0, 0, 0
+
 	var filtered []ProductNode
 	for _, n := range result.Data.ProductOfferV2.Nodes {
 		p := n.toProductNode()
-		if p.CommissionRate >= minCommission {
-			filtered = append(filtered, p)
+
+		if p.CommissionRate < cfg.MinCommission {
+			continue
 		}
+		passedMinCommission++
+
+		if p.Sales < cfg.MinSales {
+			continue
+		}
+		passedSales++
+
+		if p.RatingStar < cfg.MinRating {
+			continue
+		}
+		passedRating++
+
+		if p.CommissionRate > cfg.MaxCommission {
+			continue
+		}
+		passedMaxCommission++
+
+		filtered = append(filtered, p)
 	}
+
+	slog.Info("shopee: filtros aplicados",
+		"total_api", total,
+		"passou_min_commission", passedMinCommission,
+		"passou_sales", passedSales,
+		"passou_rating", passedRating,
+		"passou_max_commission", passedMaxCommission,
+		"final", len(filtered),
+	)
+
 	return filtered, nil
 }
