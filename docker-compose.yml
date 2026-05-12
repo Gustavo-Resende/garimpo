@@ -26,7 +26,7 @@ services:
         condition: service_healthy
 
   evolution_api:
-    image: atendai/evolution-api:v2.2.3
+    image: evoapicloud/evolution-api:v2.3.7
     container_name: evolution_api
     restart: always
     ports:
