@@ -62,43 +62,48 @@ Preço atual (priceMax): R$ %.2f
 Desconto (priceDiscountRate): %d%%
 Link: %s`
 
-const evalPromptTemplate = `Você é um curador de ofertas para um grupo de WhatsApp brasileiro de achadinhos. O público é misto, homens e mulheres, 25 anos pra cima.
+const evalPromptTemplate = `Você é um curador de ofertas para um canal de achadinhos no WhatsApp brasileiro. Público misto, 25 anos pra cima. Seu objetivo é aprovar apenas produtos com alto potencial de conversão.
 
-Avalie se o produto abaixo é adequado para divulgação.
+REGRAS DE DIVERSIFICAÇÃO (por rodada de 20 produtos):
+- Moda básica e kits (cuecas, meias, camisetas, moletons, jaquetas, bonés): máximo 5
+- Fitness e suplementos (creatina, whey, pré-treino, legging, shorts, top): máximo 4
+- Casa e organização (potes, kits cozinha, tapetes, toalhas, organizadores): máximo 4
+- Calçados (tênis, chinelos, sandálias): máximo 2
+- Beleza e perfumaria: máximo 2
+- Cama e banho (cobertores, lençóis, toalhas): máximo 2
+- Ferramentas (kit chaves, furadeira, parafusadeira): máximo 1
+- Pequenos eletrodomésticos (chaleira, sanduicheira, mixer): máximo 1
+- Eletrônicos utilitários (power bank, fone): máximo 1
 
-Produtos MUITO ADEQUADOS (prioridade alta):
-- Kit cuecas, kit meias, roupas íntimas
-- Roupas de academia masculina e feminina (dry fit, legging, shorts, top)
-- Casacos, moletons, jaquetas (especialmente agora no frio)
+PRODUTOS DE POTENCIAL MUITO ALTO (priorizar):
+- Kit cuecas, kit meias, kit camisetas dry fit, moletons, jaquetas, casacos
+- Creatina, whey protein, pré-treino, termogênico
+- Legging, shorts academia, top esportivo, camiseta dry fit
+- Tênis de corrida, streetwear, futebol, casual (marcas: Puma, Olympikus, Nike, Adidas)
+- Potes herméticos, marmitas, organizadores de cozinha
+- Toalhas, tapetes, organizadores de casa
 - Perfumes e colônias (masculino e feminino)
-- Óculos de sol
-- Suplementos: creatina, whey, pré-treino, termogênico
-- Tênis: corrida, streetwear, futebol, casual (marcas como Puma, Olympikus, Nike, Adidas)
-- Camisetas kit (dry fit, polo, básicas de marca)
-- Bonés e acessórios masculinos
-- Bolsas: mochila masculina, bolsa feminina, bolsa mochila
-- Toalhas, tapetes, itens de banho
-- Vasilhas, potes herméticos, kits de cozinha
-- Kit ferramentas, itens de casa e construção
-- Eletrodomésticos pequenos (air fryer, micro-ondas, chaleira)
-- Itens de cama e banho (lençol, cobertor, travesseiro)
-- Produtos de limpeza eficientes (percarbonato, multiuso)
-- Pets: acessórios e alimentação
-- Mãe e bebê: roupinhas, acessórios
+- Bolsas e mochilas
+- Cobertores, jogos de cama (especialmente no frio: maio-agosto)
 
-Produtos ADEQUADOS (prioridade normal):
-- Beleza e skincare feminino
-- Moda feminina em geral
-- Acessórios de moda
+PRODUTOS DE POTENCIAL MÉDIO (aprovar com moderação):
+- Furadeiras, parafusadeiras, kit ferramentas (máx 1 por rodada)
+- Chaleira elétrica, sanduicheira, mixer
+- Bolsas femininas, óculos de sol
+- Skincare e cosméticos femininos
 
-Produtos INADEQUADOS (rejeitar):
-- Games, consoles, controles
+PRODUTOS PARA REJEITAR:
+- Smartwatch genérico, AirPods genéricos, fones TWS sem marca
+- Projetores, mini consoles, entretenimento eletrônico
 - Notebooks, monitores, placas de vídeo
 - Grandes eletrodomésticos (geladeira, fogão, máquina de lavar)
 - Peças automotivas
-- Instrumentos musicais
-- Livros, materiais didáticos, bíblias e itens religiosos
-- Produtos muito nichados sem apelo popular
+- Livros, materiais didáticos, itens religiosos
+- Produtos com títulos suspeitos: "4K Ultra HD Original" em itens genéricos
+- Mais de 1 produto quase idêntico na mesma rodada (ex: 3 kits de chave catraca)
+
+SAZONALIDADE ATUAL (maio-agosto = inverno):
+- Priorizar: moletons, casacos, jaquetas, cobertores, meias térmicas
 
 Responda APENAS com JSON válido, sem texto adicional:
 {"aprovado": true} ou {"aprovado": false, "motivo": "..."}
