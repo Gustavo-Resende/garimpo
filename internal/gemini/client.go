@@ -75,6 +75,32 @@ REGRAS DE DIVERSIFICAÇÃO (por rodada de 20 produtos):
 - Pequenos eletrodomésticos (chaleira, sanduicheira, mixer): máximo 1
 - Eletrônicos utilitários (power bank, fone): máximo 1
 
+PRIORIZAÇÃO POR MARCA (em roupas, calçados e acessórios):
+
+Produtos de marcas reconhecidas devem receber prioridade MÁXIMA quando apresentarem desconto real e relevante (priceDiscountRate >= 15%%). Marcas prioritárias:
+
+Esportes e fitness: Nike, Adidas, Puma, Mizuno, Olympikus, Under Armour, Asics, New Balance, Fila, Penalty, Umbro
+Moda masculina: Aramis, Reserva, Hering, Alpha Co, Lacoste, Tommy Hilfiger, Polo Wear, Insider, Polo Ralph Lauren
+Moda feminina: Forum, Animale, Colcci, Shoulder, Farm
+Calçados: Vans, Converse, Skechers, Havaianas, Rider
+Suplementos: Black Skull, FTW, Growth, Max Titanium, Integral Médica, Probiótica
+
+REGRA DE DESCONTO PARA MARCAS:
+- Marca reconhecida + desconto >= 15%% → prioridade MÁXIMA
+- Marca reconhecida + desconto < 15%% → aprovado com prioridade NORMAL
+- Sem marca reconhecida → seguir regras abaixo
+
+Exemplos:
+- Polo Aramis de R$ 279 por R$ 125 (55%% OFF) → prioridade máxima
+- Tênis Nike com 5%% de desconto → aprovado com prioridade normal
+- Kit Hering com 40%% OFF → prioridade máxima
+
+Para produtos de vestuário e calçados SEM marca reconhecida no título:
+- Se o título contiver palavras como "atacado", "bloguerinha", "modinha", "genérico" → rejeitar
+- Se for kit de roupas sem nenhuma marca identificável e com título genérico (ex: "Kit 5 Camisetas Masculinas Básicas") → reprovar com motivo "kit genérico sem marca"
+- Se for tênis ou calçado sem marca reconhecida → reprovar com motivo "calçado sem marca"
+- Roupas íntimas (cuecas, meias, sutiã) e acessórios de academia (legging, top, shorts) podem ser aprovados sem marca reconhecida pois o apelo é pelo produto em si
+
 PRODUTOS DE POTENCIAL MUITO ALTO (priorizar):
 - Kit cuecas, kit meias, kit camisetas dry fit, moletons, jaquetas, casacos
 - Creatina, whey protein, pré-treino, termogênico
@@ -109,7 +135,8 @@ Responda APENAS com JSON válido, sem texto adicional:
 {"aprovado": true} ou {"aprovado": false, "motivo": "..."}
 
 Produto: %s
-Preço: R$ %.2f`
+Preço: R$ %.2f
+Desconto: %d%%`
 
 type Client struct {
 	apiKey     string
@@ -224,8 +251,8 @@ func (c *Client) GenerateMessage(p queue.Product) (string, error) {
 
 // EvaluateProduct avalia se um produto é adequado para divulgação.
 // Retorna (aprovado, motivo, erro). Em caso de erro, o caller decide se enfileira mesmo assim.
-func (c *Client) EvaluateProduct(title string, price float64) (bool, string, error) {
-	prompt := fmt.Sprintf(evalPromptTemplate, title, price)
+func (c *Client) EvaluateProduct(title string, price float64, discount int) (bool, string, error) {
+	prompt := fmt.Sprintf(evalPromptTemplate, title, price, discount)
 	body := geminiRequest{
 		Contents:         []geminiContent{{Parts: []geminiPart{{Text: prompt}}}},
 		GenerationConfig: &generationConfig{ResponseMIMEType: "application/json"},

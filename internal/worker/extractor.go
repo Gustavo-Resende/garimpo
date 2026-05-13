@@ -34,7 +34,7 @@ func RunExtractor(shopeeClient *shopee.Client, geminiClient *gemini.Client, q *q
 					break
 				}
 
-				approved, motivo, err := geminiClient.EvaluateProduct(p.ProductName, p.PriceMin)
+				approved, motivo, err := geminiClient.EvaluateProduct(p.ProductName, p.PriceMin, p.PriceDiscountRate)
 				if err != nil {
 					log.Error("extractor: EvaluateProduct", "product", p.ProductName, "err", err)
 					totalAIError++
