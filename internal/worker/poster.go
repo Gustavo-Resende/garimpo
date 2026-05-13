@@ -2,6 +2,7 @@ package worker
 
 import (
 	"log/slog"
+	"math/rand"
 	"time"
 
 	"github.com/Gustavo-Resende/garimpo/internal/evolution"
@@ -11,9 +12,10 @@ import (
 )
 
 type PosterConfig struct {
-	PostingInterval time.Duration
-	StartHour       int
-	EndHour         int
+	MinInterval time.Duration
+	MaxInterval time.Duration
+	StartHour   int
+	EndHour     int
 }
 
 func RunPoster(q *queue.Queue, gem *gemini.Client, evo *evolution.Client, cfg PosterConfig, log *slog.Logger) {
@@ -60,9 +62,11 @@ func RunPoster(q *queue.Queue, gem *gemini.Client, evo *evolution.Client, cfg Po
 		log.Info("poster: produto postado", "id", product.ID, "title", product.Title)
 	}
 
-	ticker := time.NewTicker(cfg.PostingInterval)
-	defer ticker.Stop()
-	for range ticker.C {
+	for {
 		run()
+		delta := int64(cfg.MaxInterval - cfg.MinInterval)
+		interval := cfg.MinInterval + time.Duration(rand.Int63n(delta+1))
+		log.Info("poster: próximo post em X minutos", "minutos", int(interval.Minutes()))
+		time.Sleep(interval)
 	}
 }

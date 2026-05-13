@@ -141,56 +141,56 @@ func hasValidShopType(shopType []int) bool {
 
 const maxAPILimit = 50
 
-func (c *Client) FetchProducts(cfg FilterConfig, limit int) ([]ProductNode, error) {
+func (c *Client) FetchPage(cfg FilterConfig, limit, page int) (nodes []ProductNode, hasNextPage bool, err error) {
 	if limit > maxAPILimit {
 		limit = maxAPILimit
 	}
 	query := fmt.Sprintf(
-		`{"query":"{ productOfferV2(sortType: 2, page: 1, limit: %d) { nodes { itemId productName productLink offerLink imageUrl priceMin priceMax priceDiscountRate sales ratingStar commissionRate commission shopName shopType } pageInfo { page limit hasNextPage } } }"}`,
-		limit,
+		`{"query":"{ productOfferV2(sortType: 2, page: %d, limit: %d) { nodes { itemId productName productLink offerLink imageUrl priceMin priceMax priceDiscountRate sales ratingStar commissionRate commission shopName shopType } pageInfo { page limit hasNextPage } } }"}`,
+		page, limit,
 	)
 
 	var lastErr error
 	for range 3 {
-		nodes, err := c.doFetch(query, cfg)
-		if err == nil {
-			return nodes, nil
+		n, hnp, e := c.doFetch(query, cfg)
+		if e == nil {
+			return n, hnp, nil
 		}
-		lastErr = err
+		lastErr = e
 	}
-	return nil, lastErr
+	return nil, false, lastErr
 }
 
-func (c *Client) doFetch(query string, cfg FilterConfig) ([]ProductNode, error) {
+func (c *Client) doFetch(query string, cfg FilterConfig) ([]ProductNode, bool, error) {
 	req, err := http.NewRequest(http.MethodPost, apiURL, bytes.NewBufferString(query))
 	if err != nil {
-		return nil, fmt.Errorf("shopee: build request: %w", err)
+		return nil, false, fmt.Errorf("shopee: build request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", c.buildAuthHeader(query))
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("shopee: http request: %w", err)
+		return nil, false, fmt.Errorf("shopee: http request: %w", err)
 	}
 	defer resp.Body.Close()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, fmt.Errorf("shopee: read body: %w", err)
+		return nil, false, fmt.Errorf("shopee: read body: %w", err)
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("shopee: unexpected status %d: %s", resp.StatusCode, body)
+		return nil, false, fmt.Errorf("shopee: unexpected status %d: %s", resp.StatusCode, body)
 	}
 
 	var result productOfferResponse
 	if err := json.Unmarshal(body, &result); err != nil {
-		return nil, fmt.Errorf("shopee: decode response: %w", err)
+		return nil, false, fmt.Errorf("shopee: decode response: %w", err)
 	}
 
 	if len(result.Errors) > 0 {
-		return nil, fmt.Errorf("shopee: api error: %s", result.Errors[0].Message)
+		return nil, false, fmt.Errorf("shopee: api error: %s", result.Errors[0].Message)
 	}
 
 	total := len(result.Data.ProductOfferV2.Nodes)
@@ -238,5 +238,5 @@ func (c *Client) doFetch(query string, cfg FilterConfig) ([]ProductNode, error) 
 		"final", len(filtered),
 	)
 
-	return filtered, nil
+	return filtered, result.Data.ProductOfferV2.PageInfo.HasNextPage, nil
 }

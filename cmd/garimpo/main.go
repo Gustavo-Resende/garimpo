@@ -63,14 +63,16 @@ func main() {
 	evolutionGroup   := mustEnv("EVOLUTION_GROUP_JID")
 	dbPath           := mustEnv("DB_PATH")
 
-	minCommission   := envFloat("MIN_COMMISSION", 0.08)
-	maxCommission   := envFloat("MAX_COMMISSION", 0.40)
-	minSales        := envInt("MIN_SALES", 500)
-	minRating       := envFloat("MIN_RATING", 4.0)
-	extractionHours := envInt("EXTRACTION_INTERVAL_HOURS", 4)
-	postingMinutes  := envInt("POSTING_INTERVAL_MINUTES", 12)
-	startHour       := envInt("POSTING_START_HOUR", 7)
-	endHour         := envInt("POSTING_END_HOUR", 23)
+	minCommission    := envFloat("MIN_COMMISSION", 0.08)
+	maxCommission    := envFloat("MAX_COMMISSION", 0.40)
+	minSales         := envInt("MIN_SALES", 500)
+	minRating        := envFloat("MIN_RATING", 4.0)
+	extractionHours  := envInt("EXTRACTION_INTERVAL_HOURS", 4)
+	postingMinMin    := envInt("POSTING_MIN_INTERVAL_MINUTES", 4)
+	postingMaxMin    := envInt("POSTING_MAX_INTERVAL_MINUTES", 12)
+	startHour        := envInt("POSTING_START_HOUR", 7)
+	endHour          := envInt("POSTING_END_HOUR", 23)
+	targetQueueSize  := envInt("TARGET_QUEUE_SIZE", 20)
 
 	db, err := sql.Open("sqlite", dbPath)
 	if err != nil {
@@ -98,16 +100,20 @@ func main() {
 		},
 		ExtractionInterval: time.Duration(extractionHours) * time.Hour,
 		FetchLimit:         envInt("SHOPEE_PRODUCT_LIMIT", 50),
+		TargetQueueSize:    targetQueueSize,
 	}
 	posterCfg := worker.PosterConfig{
-		PostingInterval: time.Duration(postingMinutes) * time.Minute,
-		StartHour:       startHour,
-		EndHour:         endHour,
+		MinInterval: time.Duration(postingMinMin) * time.Minute,
+		MaxInterval: time.Duration(postingMaxMin) * time.Minute,
+		StartHour:   startHour,
+		EndHour:     endHour,
 	}
 
 	log.Info("garimpo iniciando",
 		"extraction_interval_hours", extractionHours,
-		"posting_interval_minutes", postingMinutes,
+		"posting_min_minutes", postingMinMin,
+		"posting_max_minutes", postingMaxMin,
+		"target_queue_size", targetQueueSize,
 		"min_commission", minCommission,
 	)
 
