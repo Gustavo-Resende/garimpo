@@ -14,56 +14,95 @@ import (
 
 const apiURL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent"
 
-const promptTemplate = `Você é um especialista em marketing de afiliados. Gere uma caption curta para acompanhar a imagem de um produto no WhatsApp.
+const promptTemplate = `Gere uma mensagem de divulgação para WhatsApp seguindo EXATAMENTE este formato:
 
-Formato obrigatório (4 linhas separadas por \n\n):
-[Nome do produto limpo e curto, com emoji temático no final]
+[TÍTULO CHAMATIVO EM CAIXA ALTA — máx 4 palavras, criativo e direto]
 
-💰 R$ [preço] — [desconto]%% OFF
+[Nome do produto limpo e curto] [emoji temático]
 
-[Frase curta de benefício ou urgência, máximo 1 linha, informal]
+De R$ [preço original] por R$ [preço atual] 🦸🏻‍♂️
 
 👉 [link]
 
+Exemplos:
+
+MIZUNO DE CORRIDA
+Tênis Mizuno Goya 👟
+De R$ 349 por R$ 188 🦸🏻‍♂️
+👉 https://s.shopee.com.br/xxx
+
+7 CONTO CADA POTE
+Kit 10 Potes de Vidro Hermético 🫙
+De R$ 149 por R$ 73 🦸🏻‍♂️
+👉 https://s.shopee.com.br/xxx
+
+KIT COMPLETO PRA TREINO
+Kit 5 Shorts Masculino Dry Fit 🩳
+De R$ 180 por R$ 84 🦸🏻‍♂️
+👉 https://s.shopee.com.br/xxx
+
+Como calcular o preço original:
+precoOriginal = priceMax / (1 - priceDiscountRate/100)
+Arredonde para 2 casas decimais.
+Se priceDiscountRate for 0, omita o De/por e mostre apenas: R$ [priceMax] 🦸🏻‍♂️
+
 Regras obrigatórias:
-1. Nome limpo e curto — remova palavras repetidas, siglas técnicas desnecessárias e texto em caixa alta desnecessário. Ex: "Kit Macacão Bebê Algodão 👶" em vez de "Kit 5 Macacão Menina Liso Bebê Algodão Zíper Vira Pé Inverno Infantil Macio Macacões"
-2. Emoji temático no final do nome — deve combinar com o produto, não ser genérico
-3. Linha do preço sempre começa com 💰
-4. Frase de benefício curta, direta, sem exagero
-5. Link sempre na última linha, precedido de 👉, sem nenhum texto depois
-6. Separar cada bloco com \n\n
+1. TÍTULO em caixa alta, criativo, máx 4 palavras
+2. Nome do produto limpo, sem repetição, sem caixa alta desnecessária
+3. Emoji temático no final do nome
+4. Linha de preço com 🦸🏻‍♂️ no final
+5. Link sempre precedido de 👉, última linha, nada depois
+6. \n\n entre cada bloco
 7. Tom informal em português brasileiro
-8. Não inventar informações que não foram passadas
+8. Não inventar preços
 
 Dados do produto:
 Nome: %s
-Preço: R$ %.2f
-Desconto: %d%%
+Preço atual (priceMax): R$ %.2f
+Desconto (priceDiscountRate): %d%%
 Link: %s`
 
-const evalPromptTemplate = `Você é um curador de ofertas para um grupo de WhatsApp brasileiro de achadinhos.
-Avalie se o produto abaixo é adequado para divulgação.
-Produtos ADEQUADOS:
-- Itens de casa e cozinha (utensílios, potes, organizadores)
-- Eletrodomésticos pequenos (air fryer, micro-ondas, chaleira, panela elétrica)
-- Roupas de academia (dry fit, legging, shorts esportivos)
-- Moda masculina e feminina em tendência (oversized, cargo, streetwear)
-- Beleza e cuidados pessoais (skincare, perfumes, cabelo, barba)
-- Esportes e academia (equipamentos, tênis, garrafa d'água, óculos)
-- Pets (acessórios, alimentação)
-- Saúde (suplementos, equipamentos)
-- Mãe e bebê
+const evalPromptTemplate = `Você é um curador de ofertas para um grupo de WhatsApp brasileiro de achadinhos. O público é misto, homens e mulheres, 25 anos pra cima.
 
-Produtos INADEQUADOS:
-- Games, consoles, controles (PlayStation, Xbox, Nintendo)
-- Informática cara (notebooks, monitores, placas de vídeo)
-- Grandes eletrodomésticos (geladeira, fogão, máquina de lavar, ar condicionado)
-- Peças e acessórios para carros ou motos
+Avalie se o produto abaixo é adequado para divulgação.
+
+Produtos MUITO ADEQUADOS (prioridade alta):
+- Kit cuecas, kit meias, roupas íntimas
+- Roupas de academia masculina e feminina (dry fit, legging, shorts, top)
+- Casacos, moletons, jaquetas (especialmente agora no frio)
+- Perfumes e colônias (masculino e feminino)
+- Óculos de sol
+- Suplementos: creatina, whey, pré-treino, termogênico
+- Tênis: corrida, streetwear, futebol, casual (marcas como Puma, Olympikus, Nike, Adidas)
+- Camisetas kit (dry fit, polo, básicas de marca)
+- Bonés e acessórios masculinos
+- Bolsas: mochila masculina, bolsa feminina, bolsa mochila
+- Toalhas, tapetes, itens de banho
+- Vasilhas, potes herméticos, kits de cozinha
+- Kit ferramentas, itens de casa e construção
+- Eletrodomésticos pequenos (air fryer, micro-ondas, chaleira)
+- Itens de cama e banho (lençol, cobertor, travesseiro)
+- Produtos de limpeza eficientes (percarbonato, multiuso)
+- Pets: acessórios e alimentação
+- Mãe e bebê: roupinhas, acessórios
+
+Produtos ADEQUADOS (prioridade normal):
+- Beleza e skincare feminino
+- Moda feminina em geral
+- Acessórios de moda
+
+Produtos INADEQUADOS (rejeitar):
+- Games, consoles, controles
+- Notebooks, monitores, placas de vídeo
+- Grandes eletrodomésticos (geladeira, fogão, máquina de lavar)
+- Peças automotivas
 - Instrumentos musicais
-- Produtos sem apelo popular ou muito nichados
+- Livros, materiais didáticos, bíblias e itens religiosos
+- Produtos muito nichados sem apelo popular
 
 Responda APENAS com JSON válido, sem texto adicional:
 {"aprovado": true} ou {"aprovado": false, "motivo": "..."}
+
 Produto: %s
 Preço: R$ %.2f`
 
