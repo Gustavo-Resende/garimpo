@@ -20,7 +20,7 @@ const promptTemplate = `Gere uma mensagem de divulgação para WhatsApp seguindo
 
 [Nome do produto limpo e curto] [emoji temático]
 
-De R$ [preço original] por R$ [preço atual] 🦸🏻‍♂️
+De R$ [preço original] por R$ [preço atual]
 
 👉 [link]
 
@@ -28,29 +28,25 @@ Exemplos:
 
 MIZUNO DE CORRIDA
 Tênis Mizuno Goya 👟
-De R$ 349 por R$ 188 🦸🏻‍♂️
-👉 https://s.shopee.com.br/xxx
+De R$ 349 por R$ 188👉 https://s.shopee.com.br/xxx
 
 7 CONTO CADA POTE
 Kit 10 Potes de Vidro Hermético 🫙
-De R$ 149 por R$ 73 🦸🏻‍♂️
-👉 https://s.shopee.com.br/xxx
+De R$ 149 por R$ 73👉 https://s.shopee.com.br/xxx
 
 KIT COMPLETO PRA TREINO
 Kit 5 Shorts Masculino Dry Fit 🩳
-De R$ 180 por R$ 84 🦸🏻‍♂️
-👉 https://s.shopee.com.br/xxx
+De R$ 180 por R$ 84👉 https://s.shopee.com.br/xxx
 
 Como calcular o preço original:
 precoOriginal = priceMax / (1 - priceDiscountRate/100)
 Arredonde para 2 casas decimais.
-Se priceDiscountRate for 0, omita o De/por e mostre apenas: R$ [priceMax] 🦸🏻‍♂️
-
+Se priceDiscountRate for 0, omita o De/por e mostre apenas: R$ [priceMax]
 Regras obrigatórias:
 1. TÍTULO em caixa alta, criativo, máx 4 palavras
 2. Nome do produto limpo, sem repetição, sem caixa alta desnecessária
 3. Emoji temático no final do nome
-4. Linha de preço com 🦸🏻‍♂️ no final
+4. Linha de preço sem emoji no final
 5. Link sempre precedido de 👉, última linha, nada depois
 6. \n\n entre cada bloco
 7. Tom informal em português brasileiro
