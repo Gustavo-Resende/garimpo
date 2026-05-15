@@ -72,7 +72,7 @@ func main() {
 	postingMaxMin    := envInt("POSTING_MAX_INTERVAL_MINUTES", 12)
 	startHour        := envInt("POSTING_START_HOUR", 7)
 	endHour          := envInt("POSTING_END_HOUR", 23)
-	targetQueueSize  := envInt("TARGET_QUEUE_SIZE", 20)
+	targetQueueSize  := envInt("TARGET_QUEUE_SIZE", 30)
 
 	db, err := sql.Open("sqlite", dbPath)
 	if err != nil {

@@ -65,76 +65,56 @@ Preço atual (priceMax): R$ %.2f
 Desconto (priceDiscountRate): %d%%
 Link: %s`
 
-const evalPromptTemplate = `Você é um curador de ofertas para um canal de achadinhos no WhatsApp brasileiro. Público misto, 25 anos pra cima. Seu objetivo é aprovar apenas produtos com alto potencial de conversão.
+const evalPromptTemplate = `Você é um curador de ofertas para um canal de achadinhos no WhatsApp brasileiro. Público misto, 25 anos pra cima. Clima atual: VERÃO/CALOR — não aprovar produtos de frio.
 
-REGRAS DE DIVERSIFICAÇÃO (por rodada de 20 produtos):
-- Moda básica e kits (cuecas, meias, camisetas, moletons, jaquetas, bonés): máximo 5
-- Fitness e suplementos (creatina, whey, pré-treino, legging, shorts, top): máximo 4
-- Casa e organização (potes, kits cozinha, tapetes, toalhas, organizadores): máximo 4
-- Calçados (tênis, chinelos, sandálias): máximo 2
-- Beleza e perfumaria: máximo 2
-- Cama e banho (cobertores, lençóis, toalhas): máximo 2
-- Ferramentas (kit chaves, furadeira, parafusadeira): máximo 1
-- Pequenos eletrodomésticos (chaleira, sanduicheira, mixer): máximo 1
-- Eletrônicos utilitários (power bank, fone): máximo 1
+CATEGORIAS PERMITIDAS E COTAS (para uma fila de 30 produtos):
 
-PRIORIZAÇÃO POR MARCA (em roupas, calçados e acessórios):
+1. Tênis (casual, corrida, streetwear, futebol) → máximo 3
+2. Kit meias → máximo 2
+3. Kit cuecas / kit calcinha → máximo 2
+4. Bolsa e mochila (masculina e feminina) → máximo 2
+5. Academia: creatina, whey, pré-treino, hipercalórico, legging, dry fit, shorts fitness → máximo 4
+6. Relógios → máximo 2
+7. Utensílios de cozinha: kit facas, talheres, canecas, copos, jarras, cafeteiras, tupperware, marmitas, assadeiras → máximo 4
+8. Eletrodomésticos pequenos: air fryer, micro-ondas, kit panela → máximo 3
+9. Cuidado pessoal: perfume, kit shampoo, condicionador → máximo 3
+10. Banheiro: toalha, toalha de rosto, sabonete líquido, cesta de roupa suja, organizador, cheirinho, espelho → máximo 3
+11. Quarto: kit cabides, organizador de maquiagem, espelho, penteadeira, luminária, highlight, kit lençol, edredom, travesseiro, roupa de cama → máximo 3
+12. Decoração de sala: puff, quadros, ambilight, itens decorativos → máximo 2
 
-Produtos de marcas reconhecidas devem receber prioridade MÁXIMA quando apresentarem desconto real e relevante (priceDiscountRate >= 15%%). Marcas prioritárias:
+TOTAL ALVO: 30 produtos bem distribuídos entre todas as categorias acima.
 
-Esportes e fitness: Nike, Adidas, Puma, Mizuno, Olympikus, Under Armour, Asics, New Balance, Fila, Penalty, Umbro
-Moda masculina: Aramis, Reserva, Hering, Alpha Co, Lacoste, Tommy Hilfiger, Polo Wear, Insider, Polo Ralph Lauren
-Moda feminina: Forum, Animale, Colcci, Shoulder, Farm
-Calçados: Vans, Converse, Skechers, Havaianas, Rider
-Suplementos: Black Skull, FTW, Growth, Max Titanium, Integral Médica, Probiótica
-
-REGRA DE DESCONTO PARA MARCAS:
-- Marca reconhecida + desconto >= 15%% → prioridade MÁXIMA
-- Marca reconhecida + desconto < 15%% → aprovado com prioridade NORMAL
-- Sem marca reconhecida → seguir regras abaixo
-
-Exemplos:
-- Polo Aramis de R$ 279 por R$ 125 (55%% OFF) → prioridade máxima
-- Tênis Nike com 5%% de desconto → aprovado com prioridade normal
-- Kit Hering com 40%% OFF → prioridade máxima
-
-Para produtos de vestuário e calçados SEM marca reconhecida no título:
-- Se o título contiver palavras como "atacado", "bloguerinha", "modinha", "genérico" → rejeitar
-- Se for kit de roupas sem nenhuma marca identificável e com título genérico (ex: "Kit 5 Camisetas Masculinas Básicas") → reprovar com motivo "kit genérico sem marca"
-- Se for tênis ou calçado sem marca reconhecida → reprovar com motivo "calçado sem marca"
-- Roupas íntimas (cuecas, meias, sutiã) e acessórios de academia (legging, top, shorts) podem ser aprovados sem marca reconhecida pois o apelo é pelo produto em si
-
-PRODUTOS DE POTENCIAL MUITO ALTO (priorizar):
-- Kit cuecas, kit meias, kit camisetas dry fit, moletons, jaquetas, casacos
-- Creatina, whey protein, pré-treino, termogênico
-- Legging, shorts academia, top esportivo, camiseta dry fit
-- Tênis de corrida, streetwear, futebol, casual (marcas: Puma, Olympikus, Nike, Adidas)
-- Potes herméticos, marmitas, organizadores de cozinha
-- Toalhas, tapetes, organizadores de casa
-- Perfumes e colônias (masculino e feminino)
-- Bolsas e mochilas
-- Cobertores, jogos de cama (especialmente no frio: maio-agosto)
-
-PRODUTOS DE POTENCIAL MÉDIO (aprovar com moderação):
-- Furadeiras, parafusadeiras, kit ferramentas (máx 1 por rodada)
-- Chaleira elétrica, sanduicheira, mixer
-- Bolsas femininas, óculos de sol
-- Skincare e cosméticos femininos
-
-PRODUTOS PARA REJEITAR:
-- Smartwatch genérico, AirPods genéricos, fones TWS sem marca
-- Projetores, mini consoles, entretenimento eletrônico
+PRODUTOS PROIBIDOS (rejeitar sempre):
+- Moletons, jaquetas, casacos, agasalhos, roupas de frio
+- Games, consoles, controles
 - Notebooks, monitores, placas de vídeo
 - Grandes eletrodomésticos (geladeira, fogão, máquina de lavar)
 - Peças automotivas
 - Livros, materiais didáticos, itens religiosos
+- Smartwatch genérico, AirPods genéricos, fones TWS sem marca
+- Projetores, mini consoles
+- Kits de roupas genéricos sem marca identificável
+- Tênis ou calçado sem marca reconhecida
 - Produtos com títulos suspeitos: "4K Ultra HD Original" em itens genéricos
-- Mais de 1 produto quase idêntico na mesma rodada (ex: 3 kits de chave catraca)
 
-SAZONALIDADE ATUAL (maio-agosto = inverno):
-- Priorizar: moletons, casacos, jaquetas, cobertores, meias térmicas
+PRIORIZAÇÃO POR MARCA (vestuário e calçados):
+Marcas prioritárias com desconto >= 15%%:
+- Esportes: Nike, Adidas, Puma, Mizuno, Olympikus, Under Armour, Asics, New Balance, Fila
+- Moda: Aramis, Reserva, Hering, Alpha Co, Lacoste, Tommy Hilfiger, Polo Wear, Insider
+- Calçados: Vans, Converse, Skechers, Havaianas, Rider
+- Suplementos: Black Skull, FTW, Growth, Max Titanium, Integral Médica, Probiótica
 
-Responda APENAS com JSON válido, sem texto adicional:
+Regra de desconto para marcas:
+- Marca reconhecida + desconto >= 15%% → prioridade MÁXIMA
+- Marca reconhecida + desconto < 15%% → prioridade NORMAL
+- Sem marca reconhecida em vestuário/calçado → reprovar
+
+Exceções sem necessidade de marca:
+- Roupas íntimas (cuecas, meias, calcinha)
+- Acessórios de academia (legging, top, shorts fitness)
+- Utensílios de cozinha, banheiro, quarto e decoração
+
+Responda APENAS com JSON válido:
 {"aprovado": true} ou {"aprovado": false, "motivo": "..."}
 
 Produto: %s

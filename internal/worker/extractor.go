@@ -9,7 +9,7 @@ import (
 	"github.com/Gustavo-Resende/garimpo/internal/shopee"
 )
 
-const maxPages = 5
+const maxPages = 10
 
 type ExtractorConfig struct {
 	FilterConfig       shopee.FilterConfig
