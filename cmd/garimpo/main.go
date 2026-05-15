@@ -1,10 +1,13 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"log/slog"
 	"os"
+	"os/signal"
 	"strconv"
+	"syscall"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -13,6 +16,7 @@ import (
 	"github.com/Gustavo-Resende/garimpo/internal/gemini"
 	"github.com/Gustavo-Resende/garimpo/internal/queue"
 	"github.com/Gustavo-Resende/garimpo/internal/shopee"
+	"github.com/Gustavo-Resende/garimpo/internal/telegram"
 	"github.com/Gustavo-Resende/garimpo/internal/worker"
 )
 
@@ -54,25 +58,28 @@ func envInt(key string, def int) int {
 func main() {
 	log := slog.Default()
 
-	shopeeAppID      := mustEnv("SHOPEE_APP_ID")
-	shopeeSecret     := mustEnv("SHOPEE_SECRET")
-	geminiAPIKey     := mustEnv("GEMINI_API_KEY")
-	evolutionURL     := mustEnv("EVOLUTION_API_URL")
-	evolutionKey     := mustEnv("EVOLUTION_API_KEY")
+	shopeeAppID       := mustEnv("SHOPEE_APP_ID")
+	shopeeSecret      := mustEnv("SHOPEE_SECRET")
+	geminiAPIKey      := mustEnv("GEMINI_API_KEY")
+	evolutionURL      := mustEnv("EVOLUTION_API_URL")
+	evolutionKey      := mustEnv("EVOLUTION_API_KEY")
 	evolutionInstance := mustEnv("EVOLUTION_INSTANCE_NAME")
-	evolutionGroup   := mustEnv("EVOLUTION_GROUP_JID")
-	dbPath           := mustEnv("DB_PATH")
+	evolutionGroup    := mustEnv("EVOLUTION_GROUP_JID")
+	telegramToken     := mustEnv("TELEGRAM_BOT_TOKEN")
+	telegramChatID    := mustEnv("TELEGRAM_CHAT_ID")
+	dbPath            := mustEnv("DB_PATH")
 
-	minCommission    := envFloat("MIN_COMMISSION", 0.08)
-	maxCommission    := envFloat("MAX_COMMISSION", 0.40)
-	minSales         := envInt("MIN_SALES", 500)
-	minRating        := envFloat("MIN_RATING", 4.0)
-	extractionHours  := envInt("EXTRACTION_INTERVAL_HOURS", 4)
-	postingMinMin    := envInt("POSTING_MIN_INTERVAL_MINUTES", 4)
-	postingMaxMin    := envInt("POSTING_MAX_INTERVAL_MINUTES", 12)
-	startHour        := envInt("POSTING_START_HOUR", 7)
-	endHour          := envInt("POSTING_END_HOUR", 23)
-	targetQueueSize  := envInt("TARGET_QUEUE_SIZE", 30)
+	minCommission   := envFloat("MIN_COMMISSION", 0.08)
+	maxCommission   := envFloat("MAX_COMMISSION", 0.40)
+	minSales        := envInt("MIN_SALES", 500)
+	minRating       := envFloat("MIN_RATING", 4.0)
+	extractionHours := envInt("EXTRACTION_INTERVAL_HOURS", 4)
+	postingMinMin   := envInt("POSTING_MIN_INTERVAL_MINUTES", 4)
+	postingMaxMin   := envInt("POSTING_MAX_INTERVAL_MINUTES", 12)
+	startHour         := envInt("POSTING_START_HOUR", 7)
+	endHour           := envInt("POSTING_END_HOUR", 23)
+	lowQueueThreshold := envInt("LOW_QUEUE_THRESHOLD", 5)
+	targetQueueSize := envInt("TARGET_QUEUE_SIZE", 30)
 
 	db, err := sql.Open("sqlite", dbPath)
 	if err != nil {
@@ -86,10 +93,11 @@ func main() {
 		os.Exit(1)
 	}
 
-	q              := queue.NewQueue(db)
-	shopeeClient   := shopee.NewClient(shopeeAppID, shopeeSecret)
-	geminiClient   := gemini.NewClient(geminiAPIKey)
+	q               := queue.NewQueue(db)
+	shopeeClient    := shopee.NewClient(shopeeAppID, shopeeSecret)
+	geminiClient    := gemini.NewClient(geminiAPIKey)
 	evolutionClient := evolution.NewClient(evolutionURL, evolutionKey, evolutionInstance, evolutionGroup)
+	telegramClient  := telegram.NewClient(telegramToken, telegramChatID)
 
 	extractorCfg := worker.ExtractorConfig{
 		FilterConfig: shopee.FilterConfig{
@@ -99,14 +107,15 @@ func main() {
 			MinRating:     minRating,
 		},
 		ExtractionInterval: time.Duration(extractionHours) * time.Hour,
-		FetchLimit:         envInt("SHOPEE_PRODUCT_LIMIT", 50),
-		TargetQueueSize:    targetQueueSize,
+		FetchLimit:      envInt("SHOPEE_PRODUCT_LIMIT", 50),
+		TargetQueueSize: targetQueueSize,
 	}
 	posterCfg := worker.PosterConfig{
 		MinInterval: time.Duration(postingMinMin) * time.Minute,
 		MaxInterval: time.Duration(postingMaxMin) * time.Minute,
-		StartHour:   startHour,
-		EndHour:     endHour,
+		StartHour:         startHour,
+		EndHour:           endHour,
+		LowQueueThreshold: lowQueueThreshold,
 	}
 
 	log.Info("garimpo iniciando",
@@ -117,8 +126,18 @@ func main() {
 		"min_commission", minCommission,
 	)
 
-	go worker.RunExtractor(shopeeClient, geminiClient, q, extractorCfg, log)
-	go worker.RunPoster(q, geminiClient, evolutionClient, posterCfg, log)
+	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer cancel()
 
-	select {}
+	onExtract := func() int {
+		return worker.RunExtractionOnce(shopeeClient, telegramClient, q, extractorCfg, log)
+	}
+	telegramHandler := telegram.NewHandler(telegramClient, q, log, onExtract)
+
+	go worker.RunExtractor(shopeeClient, telegramClient, q, extractorCfg, log)
+	go worker.RunPoster(q, geminiClient, evolutionClient, telegramClient, posterCfg, log)
+	go telegramHandler.Run(ctx)
+
+	<-ctx.Done()
+	log.Info("garimpo encerrando")
 }

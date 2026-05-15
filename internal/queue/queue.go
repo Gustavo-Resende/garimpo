@@ -6,17 +6,18 @@ import (
 )
 
 type Product struct {
-	ID        int
-	Title     string
-	Price     float64
-	Discount  int
-	Commission float64
-	ImageURL  string
-	OfferLink string
-	Source    string
-	Status    string
-	CreatedAt time.Time
-	SentAt    *time.Time
+	ID                int
+	Title             string
+	Price             float64
+	Discount          int
+	Commission        float64
+	ImageURL          string
+	OfferLink         string
+	Source            string
+	Status            string
+	TelegramMessageID int
+	CreatedAt         time.Time
+	SentAt            *time.Time
 }
 
 type Queue struct {
@@ -29,26 +30,54 @@ func NewQueue(db *sql.DB) *Queue {
 
 func Migrate(db *sql.DB) error {
 	_, err := db.Exec(`CREATE TABLE IF NOT EXISTS queue (
-		id           INTEGER PRIMARY KEY AUTOINCREMENT,
-		title        TEXT NOT NULL,
-		price        REAL NOT NULL,
-		discount     INTEGER,
-		commission   REAL NOT NULL,
-		image_url    TEXT,
-		offer_link   TEXT NOT NULL UNIQUE,
-		source       TEXT NOT NULL DEFAULT 'shopee',
-		status       TEXT NOT NULL DEFAULT 'pending',
-		created_at   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-		sent_at      DATETIME
+		id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+		title               TEXT NOT NULL,
+		price               REAL NOT NULL,
+		discount            INTEGER,
+		commission          REAL NOT NULL,
+		image_url           TEXT,
+		offer_link          TEXT NOT NULL UNIQUE,
+		source              TEXT NOT NULL DEFAULT 'shopee',
+		status              TEXT NOT NULL DEFAULT 'pending_review',
+		telegram_message_id INTEGER,
+		created_at          DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		sent_at             DATETIME
 	)`)
-	return err
+	if err != nil {
+		return err
+	}
+	// Migração não-destrutiva para bancos existentes.
+	_, err = db.Exec(`ALTER TABLE queue ADD COLUMN telegram_message_id INTEGER`)
+	if err != nil && !isSQLiteAlreadyExists(err) {
+		return err
+	}
+	return nil
 }
 
-// Enqueue insere o produto na fila. Retorna (true, nil) se inserido, (false, nil) se já existia.
+// isSQLiteAlreadyExists detecta o erro "duplicate column name" do SQLite.
+func isSQLiteAlreadyExists(err error) bool {
+	return err != nil && (contains(err.Error(), "duplicate column name") || contains(err.Error(), "already exists"))
+}
+
+func contains(s, sub string) bool {
+	return len(s) >= len(sub) && (s == sub || len(s) > 0 && containsStr(s, sub))
+}
+
+func containsStr(s, sub string) bool {
+	for i := 0; i <= len(s)-len(sub); i++ {
+		if s[i:i+len(sub)] == sub {
+			return true
+		}
+	}
+	return false
+}
+
+// Enqueue insere o produto na fila com status pending_review.
+// Retorna (true, nil) se inserido, (false, nil) se já existia.
 func (q *Queue) Enqueue(p Product) (bool, error) {
 	stmt, err := q.db.Prepare(`INSERT OR IGNORE INTO queue
-		(title, price, discount, commission, image_url, offer_link, source)
-		VALUES (?, ?, ?, ?, ?, ?, ?)`)
+		(title, price, discount, commission, image_url, offer_link, source, status)
+		VALUES (?, ?, ?, ?, ?, ?, ?, 'pending_review')`)
 	if err != nil {
 		return false, err
 	}
@@ -67,19 +96,46 @@ func (q *Queue) Enqueue(p Product) (bool, error) {
 	return rows > 0, err
 }
 
+func (q *Queue) GetByOfferLink(offerLink string) (*Product, error) {
+	stmt, err := q.db.Prepare(`SELECT id, title, price, discount, commission, image_url, offer_link, source, status, telegram_message_id, created_at, sent_at
+		FROM queue WHERE offer_link = ?`)
+	if err != nil {
+		return nil, err
+	}
+	defer stmt.Close()
+
+	return scanProduct(stmt.QueryRow(offerLink))
+}
+
 func (q *Queue) Dequeue() (*Product, error) {
-	stmt, err := q.db.Prepare(`SELECT id, title, price, discount, commission, image_url, offer_link, source, status, created_at, sent_at
+	stmt, err := q.db.Prepare(`SELECT id, title, price, discount, commission, image_url, offer_link, source, status, telegram_message_id, created_at, sent_at
 		FROM queue WHERE status = 'pending' ORDER BY created_at ASC LIMIT 1`)
 	if err != nil {
 		return nil, err
 	}
 	defer stmt.Close()
 
+	return scanProduct(stmt.QueryRow())
+}
+
+func (q *Queue) GetByID(id int) (*Product, error) {
+	stmt, err := q.db.Prepare(`SELECT id, title, price, discount, commission, image_url, offer_link, source, status, telegram_message_id, created_at, sent_at
+		FROM queue WHERE id = ?`)
+	if err != nil {
+		return nil, err
+	}
+	defer stmt.Close()
+
+	return scanProduct(stmt.QueryRow(id))
+}
+
+func scanProduct(row *sql.Row) (*Product, error) {
 	var p Product
 	var sentAt sql.NullTime
-	err = stmt.QueryRow().Scan(
+	var telegramMessageID sql.NullInt64
+	err := row.Scan(
 		&p.ID, &p.Title, &p.Price, &p.Discount, &p.Commission,
-		&p.ImageURL, &p.OfferLink, &p.Source, &p.Status, &p.CreatedAt, &sentAt,
+		&p.ImageURL, &p.OfferLink, &p.Source, &p.Status, &telegramMessageID, &p.CreatedAt, &sentAt,
 	)
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -89,6 +145,9 @@ func (q *Queue) Dequeue() (*Product, error) {
 	}
 	if sentAt.Valid {
 		p.SentAt = &sentAt.Time
+	}
+	if telegramMessageID.Valid {
+		p.TelegramMessageID = int(telegramMessageID.Int64)
 	}
 	return &p, nil
 }
@@ -110,6 +169,56 @@ func (q *Queue) MarkFailed(id int) error {
 	}
 	defer stmt.Close()
 	_, err = stmt.Exec(id)
+	return err
+}
+
+func (q *Queue) MarkPending(id int) error {
+	stmt, err := q.db.Prepare(`UPDATE queue SET status = 'pending' WHERE id = ?`)
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+	_, err = stmt.Exec(id)
+	return err
+}
+
+func (q *Queue) MarkPendingReview(id int) error {
+	stmt, err := q.db.Prepare(`UPDATE queue SET status = 'pending_review' WHERE id = ?`)
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+	_, err = stmt.Exec(id)
+	return err
+}
+
+func (q *Queue) MarkRejected(id int) error {
+	stmt, err := q.db.Prepare(`UPDATE queue SET status = 'rejected' WHERE id = ?`)
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+	_, err = stmt.Exec(id)
+	return err
+}
+
+func (q *Queue) SetTelegramMessageID(id int, messageID int) error {
+	stmt, err := q.db.Prepare(`UPDATE queue SET telegram_message_id = ? WHERE id = ?`)
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+	_, err = stmt.Exec(messageID, id)
+	return err
+}
+
+func (q *Queue) SetImageURL(id int, imageURL string) error {
+	stmt, err := q.db.Prepare(`UPDATE queue SET image_url = ? WHERE id = ?`)
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+	_, err = stmt.Exec(imageURL, id)
 	return err
 }
 

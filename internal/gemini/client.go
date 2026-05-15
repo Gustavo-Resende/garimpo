@@ -225,11 +225,18 @@ func (c *Client) GenerateMessage(p queue.Product) (string, error) {
 	for range 3 {
 		msg, err := c.callAPI(body)
 		if err == nil {
-			return msg, nil
+			return msg + "\n\n" + sourceLabel(p.Source), nil
 		}
 		lastErr = err
 	}
 	return "", lastErr
+}
+
+func sourceLabel(source string) string {
+	if source == "mercadolivre" {
+		return "🛒 Oferta verificada no Mercado Livre"
+	}
+	return "🛒 Oferta verificada na Shopee"
 }
 
 // EvaluateProduct avalia se um produto é adequado para divulgação.
