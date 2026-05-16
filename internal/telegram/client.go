@@ -410,14 +410,22 @@ func buildMLCaption(p queue.Product, catchyTitle string) string {
 		original := p.Price / (1 - float64(p.Discount)/100)
 		original = math.Round(original*100) / 100
 		return fmt.Sprintf(
-			"<b>%s</b>\n\n%s\n\n❌ De <s>R$ %.2f</s>\n✅ por R$ %.2f\n\n👉 %s\n\n🛒 Oferta verificada no Mercado Livre",
-			catchyTitle, p.Title, original, p.Price, p.OfferLink,
+			"<b>%s</b>\n\n%s\n\n❌ De <s>R$ %s</s>\n✅ por R$ %s\n\n👉 %s\n\n🛒 Oferta verificada no Mercado Livre",
+			catchyTitle, p.Title, formatBRL(original), formatBRL(p.Price), p.OfferLink,
 		)
 	}
 	return fmt.Sprintf(
-		"<b>%s</b>\n\n%s\n\nR$ %.2f\n\n👉 %s\n\n🛒 Oferta verificada no Mercado Livre",
-		catchyTitle, p.Title, p.Price, p.OfferLink,
+		"<b>%s</b>\n\n%s\n\nR$ %s\n\n👉 %s\n\n🛒 Oferta verificada no Mercado Livre",
+		catchyTitle, p.Title, formatBRL(p.Price), p.OfferLink,
 	)
+}
+
+// formatBRL formata um valor float64 no estilo brasileiro: 1.234,56
+func formatBRL(v float64) string {
+	s := fmt.Sprintf("%.2f", v)
+	// Troca ponto decimal por vírgula
+	s = strings.Replace(s, ".", ",", 1)
+	return s
 }
 
 // buildCaption gera o caption HTML para o produto.
