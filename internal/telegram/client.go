@@ -16,7 +16,7 @@ import (
 	"strings"
 	"time"
 
-	_ "golang.org/x/image/webp"
+	"golang.org/x/image/webp"
 
 	"github.com/Gustavo-Resende/garimpo/internal/queue"
 )
@@ -135,12 +135,14 @@ func (c *Client) SendProductForReviewUpload(p queue.Product) (int, error) {
 		return 0, fmt.Errorf("telegram: download imagem url=%q: %w", p.ImageURL, err)
 	}
 
+	resolvedURL := p.ImageURL
 	if strings.Contains(contentType, "text/html") {
 		imageURL := extractOGImage(raw)
 		if imageURL == "" {
 			return 0, fmt.Errorf("telegram: URL é página HTML mas og:image não encontrado: %s", p.ImageURL)
 		}
 		slog.Info("telegram: extraindo imagem via og:image", "page", p.ImageURL, "image", imageURL)
+		resolvedURL = imageURL
 		raw, contentType, err = c.downloadImage(imageURL)
 		if err != nil {
 			return 0, fmt.Errorf("telegram: download og:image url=%q: %w", imageURL, err)
@@ -149,6 +151,14 @@ func (c *Client) SendProductForReviewUpload(p queue.Product) (int, error) {
 
 	imageData, encodeOK := toJPEG(raw)
 	slog.Info("telegram: imagem pronta", "content_type", contentType, "size_bytes", len(raw), "jpeg_encode_ok", encodeOK)
+
+	if !encodeOK {
+		// Fallback: tenta enviar a URL diretamente
+		slog.Warn("telegram: conversão JPEG falhou, tentando URL direta", "url", resolvedURL)
+		pFallback := p
+		pFallback.ImageURL = resolvedURL
+		return c.SendProductForReview(pFallback)
+	}
 
 	caption := buildCaption(p)
 	keyboard := inlineKeyboard{
@@ -214,13 +224,21 @@ func (c *Client) SendProductForReviewUpload(p queue.Product) (int, error) {
 	return result.Result.MessageID, nil
 }
 
-// toJPEG decodifica a imagem (JPEG, PNG, WebP, etc.) e re-encodifica como JPEG.
-// Retorna os bytes resultantes e true se o re-encode teve sucesso, ou os bytes originais e false.
+// toJPEG decodifica a imagem e re-encodifica como JPEG.
+// Tenta WebP explicitamente primeiro (não se auto-registra no image package),
+// depois formatos padrão (JPEG, PNG). Retorna (bytes, true) em caso de sucesso.
 func toJPEG(data []byte) ([]byte, bool) {
-	img, _, err := image.Decode(bytes.NewReader(data))
-	if err != nil {
+	var img image.Image
+
+	// Tenta WebP explicitamente
+	if decoded, err := webp.Decode(bytes.NewReader(data)); err == nil {
+		img = decoded
+	} else if decoded, _, err := image.Decode(bytes.NewReader(data)); err == nil {
+		img = decoded
+	} else {
 		return data, false
 	}
+
 	var out bytes.Buffer
 	if err := jpeg.Encode(&out, img, &jpeg.Options{Quality: 90}); err != nil {
 		return data, false
