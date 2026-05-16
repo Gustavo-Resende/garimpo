@@ -13,23 +13,21 @@ import (
 )
 
 const (
-	sheetName  = "Página1"
-	dataRange  = sheetName + "!A2:I"
-	fullRange  = sheetName + "!A:I"
-	headerRow  = sheetName + "!A1:I1"
+	sheetName = "Página1"
+	dataRange = sheetName + "!A2:H"
 )
 
 // MLProduct representa um produto do Mercado Livre lido da planilha.
+// Colunas: product_name | price | discount | category | image_url | product_link | shop_name | offer_link
 type MLProduct struct {
-	ID          string
 	ProductName string
 	Price       float64
 	Discount    int
 	Category    string
 	ImageURL    string
 	ProductLink string
-	OfferLink   string
 	ShopName    string
+	OfferLink   string
 }
 
 type Client struct {
@@ -140,15 +138,14 @@ func parseRows(rows [][]interface{}) []MLProduct {
 	var products []MLProduct
 	for _, row := range rows {
 		p := MLProduct{
-			ID:          cellStr(row, 0),
-			ProductName: cellStr(row, 1),
-			Price:       cellFloat(row, 2),
-			Discount:    cellInt(row, 3),
-			Category:    cellStr(row, 4),
-			ImageURL:    cellStr(row, 5),
-			ProductLink: cellStr(row, 6),
+			ProductName: cellStr(row, 0),
+			Price:       cellFloat(row, 1),
+			Discount:    cellInt(row, 2),
+			Category:    cellStr(row, 3),
+			ImageURL:    cellStr(row, 4),
+			ProductLink: cellStr(row, 5),
+			ShopName:    cellStr(row, 6),
 			OfferLink:   cellStr(row, 7),
-			ShopName:    cellStr(row, 8),
 		}
 		if p.ProductName == "" {
 			continue
@@ -160,15 +157,14 @@ func parseRows(rows [][]interface{}) []MLProduct {
 
 func productToRow(p MLProduct) []interface{} {
 	return []interface{}{
-		p.ID,
 		p.ProductName,
 		fmt.Sprintf("%.2f", p.Price),
 		strconv.Itoa(p.Discount),
 		p.Category,
 		p.ImageURL,
 		p.ProductLink,
-		p.OfferLink,
 		p.ShopName,
+		p.OfferLink,
 	}
 }
 
