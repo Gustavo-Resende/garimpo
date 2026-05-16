@@ -21,7 +21,7 @@ const promptTemplate = `Gere uma mensagem de divulgação para WhatsApp seguindo
 [Nome do produto limpo e curto] [emoji temático]
 
 ❌ De ~R$ [preço original]~
-✅ por R$ [preço atual] 🦸🏻‍♂️
+✅ por R$ [preço atual]
 
 👉 [link]
 
