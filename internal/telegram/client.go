@@ -4,13 +4,17 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"image"
+	"image/jpeg"
+	_ "image/png"
 	"io"
 	"math"
 	"mime/multipart"
 	"net/http"
-	"path"
 	"strings"
 	"time"
+
+	_ "golang.org/x/image/webp"
 
 	"github.com/Gustavo-Resende/garimpo/internal/queue"
 )
@@ -122,10 +126,11 @@ func (c *Client) SendProductForReviewWithFileID(p queue.Product, fileID string) 
 // SendProductForReviewUpload baixa a imagem do produto e envia via multipart/form-data.
 // Usar quando a URL da imagem não é acessível diretamente pelo Telegram (ex: Mercado Livre).
 func (c *Client) SendProductForReviewUpload(p queue.Product) (int, error) {
-	imageData, err := c.downloadImage(p.ImageURL)
+	raw, err := c.downloadImage(p.ImageURL)
 	if err != nil {
 		return 0, fmt.Errorf("telegram: download imagem: %w", err)
 	}
+	imageData := toJPEG(raw)
 
 	caption := buildCaption(p)
 	keyboard := inlineKeyboard{
@@ -148,11 +153,7 @@ func (c *Client) SendProductForReviewUpload(p queue.Product) (int, error) {
 	_ = writeFormField(w, "parse_mode", "HTML")
 	_ = writeFormField(w, "reply_markup", string(replyMarkup))
 
-	filename := path.Base(p.ImageURL)
-	if filename == "" || filename == "." {
-		filename = "image.jpg"
-	}
-	fw, err := w.CreateFormFile("photo", filename)
+	fw, err := w.CreateFormFile("photo", "image.jpg")
 	if err != nil {
 		return 0, fmt.Errorf("telegram: criar form file: %w", err)
 	}
@@ -193,6 +194,20 @@ func (c *Client) SendProductForReviewUpload(p queue.Product) (int, error) {
 		return 0, fmt.Errorf("telegram: sendPhoto multipart: %s", result.Description)
 	}
 	return result.Result.MessageID, nil
+}
+
+// toJPEG decodifica a imagem (JPEG, PNG, WebP, etc.) e re-encodifica como JPEG.
+// Se não conseguir decodificar, retorna os bytes originais como fallback.
+func toJPEG(data []byte) []byte {
+	img, _, err := image.Decode(bytes.NewReader(data))
+	if err != nil {
+		return data
+	}
+	var out bytes.Buffer
+	if err := jpeg.Encode(&out, img, &jpeg.Options{Quality: 90}); err != nil {
+		return data
+	}
+	return out.Bytes()
 }
 
 func (c *Client) downloadImage(imageURL string) ([]byte, error) {
