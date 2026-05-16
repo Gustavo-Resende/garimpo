@@ -156,9 +156,12 @@ func parseRows(rows [][]interface{}) []MLProduct {
 }
 
 func productToRow(p MLProduct) []interface{} {
+	// Use comma as decimal separator to match the spreadsheet's pt-BR locale.
+	// Writing "319.90" with a dot causes Sheets to interpret it as 31990 (dot = thousand separator).
+	priceStr := strings.ReplaceAll(fmt.Sprintf("%.2f", p.Price), ".", ",")
 	return []interface{}{
 		p.ProductName,
-		fmt.Sprintf("%.2f", p.Price),
+		priceStr,
 		strconv.Itoa(p.Discount),
 		p.Category,
 		p.ImageURL,
