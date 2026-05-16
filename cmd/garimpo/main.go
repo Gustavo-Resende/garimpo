@@ -15,6 +15,7 @@ import (
 	"github.com/Gustavo-Resende/garimpo/internal/evolution"
 	"github.com/Gustavo-Resende/garimpo/internal/gemini"
 	"github.com/Gustavo-Resende/garimpo/internal/queue"
+	"github.com/Gustavo-Resende/garimpo/internal/sheets"
 	"github.com/Gustavo-Resende/garimpo/internal/shopee"
 	"github.com/Gustavo-Resende/garimpo/internal/telegram"
 	"github.com/Gustavo-Resende/garimpo/internal/worker"
@@ -67,8 +68,10 @@ func main() {
 	evolutionGroup    := mustEnv("EVOLUTION_GROUP_JID")
 	telegramToken     := mustEnv("TELEGRAM_BOT_TOKEN")
 	telegramChatID    := mustEnv("TELEGRAM_CHAT_ID")
-	n8nWebhookURL     := os.Getenv("N8N_WEBHOOK_URL")
-	dbPath            := mustEnv("DB_PATH")
+	n8nWebhookURL        := os.Getenv("N8N_WEBHOOK_URL")
+	sheetsCredentials    := os.Getenv("GOOGLE_SHEETS_CREDENTIALS")
+	sheetsSpreadsheetID  := os.Getenv("GOOGLE_SHEETS_ID")
+	dbPath               := mustEnv("DB_PATH")
 
 	minCommission   := envFloat("MIN_COMMISSION", 0.08)
 	maxCommission   := envFloat("MAX_COMMISSION", 0.40)
@@ -99,6 +102,19 @@ func main() {
 	geminiClient    := gemini.NewClient(geminiAPIKey)
 	evolutionClient := evolution.NewClient(evolutionURL, evolutionKey, evolutionInstance, evolutionGroup)
 	telegramClient  := telegram.NewClient(telegramToken, telegramChatID)
+
+	var sheetsClient *sheets.Client
+	if sheetsCredentials != "" && sheetsSpreadsheetID != "" {
+		sc, err := sheets.NewClient(sheetsCredentials, sheetsSpreadsheetID)
+		if err != nil {
+			log.Error("inicializar Google Sheets", "err", err)
+			os.Exit(1)
+		}
+		sheetsClient = sc
+		log.Info("google sheets: conectado", "spreadsheet_id", sheetsSpreadsheetID)
+	} else {
+		log.Warn("google sheets: GOOGLE_SHEETS_CREDENTIALS ou GOOGLE_SHEETS_ID não configurados — comandos /ml* desabilitados")
+	}
 
 	extractorCfg := worker.ExtractorConfig{
 		FilterConfig: shopee.FilterConfig{
@@ -133,7 +149,7 @@ func main() {
 	onExtract := func() int {
 		return worker.RunExtractionOnce(shopeeClient, telegramClient, q, extractorCfg, log)
 	}
-	telegramHandler := telegram.NewHandler(telegramClient, q, log, onExtract, n8nWebhookURL)
+	telegramHandler := telegram.NewHandler(telegramClient, q, sheetsClient, log, onExtract, n8nWebhookURL)
 
 	go worker.RunExtractor(shopeeClient, telegramClient, q, extractorCfg, log)
 	go worker.RunPoster(q, geminiClient, evolutionClient, telegramClient, posterCfg, log)

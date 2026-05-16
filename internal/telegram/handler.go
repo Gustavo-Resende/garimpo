@@ -13,22 +13,25 @@ import (
 	"time"
 
 	"github.com/Gustavo-Resende/garimpo/internal/queue"
+	"github.com/Gustavo-Resende/garimpo/internal/sheets"
 )
 
 type Handler struct {
-	client         *Client
-	q              *queue.Queue
-	log            *slog.Logger
-	onExtract      func() int
-	n8nWebhookURL  string
-	mu             sync.Mutex
-	awaitingImage  map[int]int // messageID → productID
+	client        *Client
+	q             *queue.Queue
+	sheetsClient  *sheets.Client
+	log           *slog.Logger
+	onExtract     func() int
+	n8nWebhookURL string
+	mu            sync.Mutex
+	awaitingImage map[int]int // messageID → productID
 }
 
-func NewHandler(client *Client, q *queue.Queue, log *slog.Logger, onExtract func() int, n8nWebhookURL string) *Handler {
+func NewHandler(client *Client, q *queue.Queue, sheetsClient *sheets.Client, log *slog.Logger, onExtract func() int, n8nWebhookURL string) *Handler {
 	return &Handler{
 		client:        client,
 		q:             q,
+		sheetsClient:  sheetsClient,
 		log:           log,
 		onExtract:     onExtract,
 		n8nWebhookURL: n8nWebhookURL,
@@ -98,6 +101,223 @@ func (h *Handler) handleText(msg *message) {
 			return
 		}
 		h.handleMLLink(link)
+
+	case msg.Text == "/mlenvia":
+		h.handleMLEnvia(false)
+
+	case msg.Text == "/mlconfirma":
+		h.handleMLEnvia(true)
+
+	case msg.Text == "/mllista":
+		h.handleMLLista()
+
+	case msg.Text == "/mlrandomizar":
+		h.handleMLRandomizar()
+
+	case msg.Text == "/mlapagar":
+		h.handleMLApagar()
+
+	case msg.Text == "/lista":
+		h.handleLista()
+	}
+}
+
+// handleMLEnvia envia produtos da planilha para curadoria.
+// Se confirmOnly=true, envia apenas os que têm offer_link (comportamento de /mlconfirma).
+// Se confirmOnly=false, exige que todos tenham offer_link (comportamento de /mlenvia).
+func (h *Handler) handleMLEnvia(confirmOnly bool) {
+	if h.sheetsClient == nil {
+		h.notify("❌ Integração com Google Sheets não configurada.")
+		return
+	}
+
+	withLink, err := h.sheetsClient.ReadProductsWithLink()
+	if err != nil {
+		h.log.Error("telegram: /mlenvia ReadProductsWithLink", "err", err)
+		h.notify("❌ Erro ao ler a planilha. Tente novamente.")
+		return
+	}
+
+	if len(withLink) == 0 {
+		h.notify("⚠️ Nenhum link de afiliado preenchido ainda.")
+		return
+	}
+
+	if !confirmOnly {
+		withoutLink, err := h.sheetsClient.ReadProductsWithoutLink()
+		if err != nil {
+			h.log.Error("telegram: /mlenvia ReadProductsWithoutLink", "err", err)
+			h.notify("❌ Erro ao ler a planilha. Tente novamente.")
+			return
+		}
+		if len(withoutLink) > 0 {
+			names := make([]string, 0, len(withoutLink))
+			for _, p := range withoutLink {
+				names = append(names, p.ProductName)
+			}
+			msg := fmt.Sprintf("⚠️ %d produto(s) ainda sem link:\n%s\n\nUse /mlconfirma para enviar mesmo assim.",
+				len(withoutLink), strings.Join(names, "\n"))
+			h.notify(msg)
+			return
+		}
+	}
+
+	sent := h.sendMLProductsForReview(withLink)
+
+	if err := h.sheetsClient.Clear(); err != nil {
+		h.log.Error("telegram: /mlenvia Clear planilha", "err", err)
+	}
+
+	h.notify(fmt.Sprintf("✅ %d produto(s) enviados para curadoria. Planilha limpa.", sent))
+}
+
+func (h *Handler) handleMLLista() {
+	if h.sheetsClient == nil {
+		h.notify("❌ Integração com Google Sheets não configurada.")
+		return
+	}
+
+	all, err := h.sheetsClient.ReadAllProducts()
+	if err != nil {
+		h.log.Error("telegram: /mllista ReadAllProducts", "err", err)
+		h.notify("❌ Erro ao ler a planilha. Tente novamente.")
+		return
+	}
+
+	if len(all) == 0 {
+		h.notify("📋 Planilha vazia.")
+		return
+	}
+
+	var withLink, withoutLink []sheets.MLProduct
+	for _, p := range all {
+		if strings.TrimSpace(p.OfferLink) != "" {
+			withLink = append(withLink, p)
+		} else {
+			withoutLink = append(withoutLink, p)
+		}
+	}
+
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "📋 Produtos na planilha (%d total):\n", len(all))
+
+	if len(withLink) > 0 {
+		fmt.Fprintf(&sb, "\n✅ Com link (%d):\n", len(withLink))
+		for i, p := range withLink {
+			fmt.Fprintf(&sb, "%d. %s — R$ %.2f\n", i+1, p.ProductName, p.Price)
+		}
+	}
+
+	if len(withoutLink) > 0 {
+		fmt.Fprintf(&sb, "\n❌ Sem link (%d):\n", len(withoutLink))
+		for i, p := range withoutLink {
+			fmt.Fprintf(&sb, "%d. %s — R$ %.2f\n", i+1, p.ProductName, p.Price)
+		}
+	}
+
+	h.notify(sb.String())
+}
+
+func (h *Handler) handleMLRandomizar() {
+	if h.sheetsClient == nil {
+		h.notify("❌ Integração com Google Sheets não configurada.")
+		return
+	}
+	if err := h.sheetsClient.Shuffle(); err != nil {
+		h.log.Error("telegram: /mlrandomizar Shuffle", "err", err)
+		h.notify("❌ Erro ao randomizar a planilha. Tente novamente.")
+		return
+	}
+	h.notify("🔀 Lista randomizada com sucesso!")
+}
+
+func (h *Handler) handleMLApagar() {
+	if h.sheetsClient == nil {
+		h.notify("❌ Integração com Google Sheets não configurada.")
+		return
+	}
+	if err := h.sheetsClient.Clear(); err != nil {
+		h.log.Error("telegram: /mlapagar Clear", "err", err)
+		h.notify("❌ Erro ao limpar a planilha. Tente novamente.")
+		return
+	}
+	h.notify("🗑️ Planilha limpa com sucesso!")
+}
+
+func (h *Handler) handleLista() {
+	products, err := h.q.ListPending()
+	if err != nil {
+		h.log.Error("telegram: /lista ListPending", "err", err)
+		h.notify("❌ Erro ao consultar a fila. Tente novamente.")
+		return
+	}
+
+	if len(products) == 0 {
+		h.notify("📋 Fila vazia — nenhum produto aguardando postagem.")
+		return
+	}
+
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "📋 Fila de postagem (%d produtos):\n\n", len(products))
+	for i, p := range products {
+		source := "Shopee"
+		if p.Source == "mercadolivre" {
+			source = "Mercado Livre"
+		}
+		fmt.Fprintf(&sb, "%d. %s — R$ %.2f (%s)\n", i+1, p.Title, p.Price, source)
+	}
+
+	h.notify(sb.String())
+}
+
+// sendMLProductsForReview enfileira e envia produtos do ML para curadoria no Telegram.
+// Retorna quantos foram enviados com sucesso.
+func (h *Handler) sendMLProductsForReview(products []sheets.MLProduct) int {
+	sent := 0
+	for _, mp := range products {
+		p := queue.Product{
+			Title:     mp.ProductName,
+			Price:     mp.Price,
+			Discount:  mp.Discount,
+			ImageURL:  mp.ImageURL,
+			OfferLink: mp.OfferLink,
+			Source:    "mercadolivre",
+		}
+
+		inserted, err := h.q.Enqueue(p)
+		if err != nil {
+			h.log.Error("telegram: /mlenvia Enqueue", "product", mp.ProductName, "err", err)
+			continue
+		}
+		if !inserted {
+			h.log.Info("telegram: /mlenvia produto já existia na fila", "product", mp.ProductName)
+		}
+
+		saved, err := h.q.GetByOfferLink(mp.OfferLink)
+		if err != nil || saved == nil {
+			h.log.Error("telegram: /mlenvia GetByOfferLink", "offer_link", mp.OfferLink, "err", err)
+			continue
+		}
+
+		msgID, err := h.client.SendProductForReview(*saved)
+		if err != nil {
+			h.log.Error("telegram: /mlenvia SendProductForReview", "product", mp.ProductName, "err", err)
+			continue
+		}
+		if err := h.q.SetTelegramMessageID(saved.ID, msgID); err != nil {
+			h.log.Warn("telegram: /mlenvia SetTelegramMessageID", "id", saved.ID, "err", err)
+		}
+
+		sent++
+		h.log.Info("telegram: produto ML enviado pro Telegram", "product", mp.ProductName)
+		time.Sleep(2500 * time.Millisecond)
+	}
+	return sent
+}
+
+func (h *Handler) notify(text string) {
+	if err := h.client.SendNotification(text); err != nil {
+		h.log.Warn("telegram: SendNotification", "err", err)
 	}
 }
 

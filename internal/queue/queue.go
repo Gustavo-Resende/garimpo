@@ -227,3 +227,33 @@ func (q *Queue) CountPending() (int, error) {
 	err := q.db.QueryRow(`SELECT COUNT(*) FROM queue WHERE status = 'pending'`).Scan(&count)
 	return count, err
 }
+
+func (q *Queue) ListPending() ([]Product, error) {
+	rows, err := q.db.Query(`SELECT id, title, price, discount, commission, image_url, offer_link, source, status, telegram_message_id, created_at, sent_at
+		FROM queue WHERE status = 'pending' ORDER BY created_at ASC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var products []Product
+	for rows.Next() {
+		var p Product
+		var sentAt sql.NullTime
+		var telegramMessageID sql.NullInt64
+		if err := rows.Scan(
+			&p.ID, &p.Title, &p.Price, &p.Discount, &p.Commission,
+			&p.ImageURL, &p.OfferLink, &p.Source, &p.Status, &telegramMessageID, &p.CreatedAt, &sentAt,
+		); err != nil {
+			return nil, err
+		}
+		if sentAt.Valid {
+			p.SentAt = &sentAt.Time
+		}
+		if telegramMessageID.Valid {
+			p.TelegramMessageID = int(telegramMessageID.Int64)
+		}
+		products = append(products, p)
+	}
+	return products, rows.Err()
+}
