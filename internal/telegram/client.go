@@ -8,6 +8,7 @@ import (
 	"image/jpeg"
 	_ "image/png"
 	"io"
+	"log/slog"
 	"math"
 	"mime/multipart"
 	"net/http"
@@ -126,11 +127,12 @@ func (c *Client) SendProductForReviewWithFileID(p queue.Product, fileID string) 
 // SendProductForReviewUpload baixa a imagem do produto e envia via multipart/form-data.
 // Usar quando a URL da imagem não é acessível diretamente pelo Telegram (ex: Mercado Livre).
 func (c *Client) SendProductForReviewUpload(p queue.Product) (int, error) {
-	raw, err := c.downloadImage(p.ImageURL)
+	raw, contentType, err := c.downloadImage(p.ImageURL)
 	if err != nil {
-		return 0, fmt.Errorf("telegram: download imagem: %w", err)
+		return 0, fmt.Errorf("telegram: download imagem url=%q: %w", p.ImageURL, err)
 	}
-	imageData := toJPEG(raw)
+	imageData, encodeOK := toJPEG(raw)
+	slog.Info("telegram: imagem baixada", "url", p.ImageURL, "content_type", contentType, "size_bytes", len(raw), "jpeg_encode_ok", encodeOK)
 
 	caption := buildCaption(p)
 	keyboard := inlineKeyboard{
@@ -197,34 +199,40 @@ func (c *Client) SendProductForReviewUpload(p queue.Product) (int, error) {
 }
 
 // toJPEG decodifica a imagem (JPEG, PNG, WebP, etc.) e re-encodifica como JPEG.
-// Se não conseguir decodificar, retorna os bytes originais como fallback.
-func toJPEG(data []byte) []byte {
+// Retorna os bytes resultantes e true se o re-encode teve sucesso, ou os bytes originais e false.
+func toJPEG(data []byte) ([]byte, bool) {
 	img, _, err := image.Decode(bytes.NewReader(data))
 	if err != nil {
-		return data
+		return data, false
 	}
 	var out bytes.Buffer
 	if err := jpeg.Encode(&out, img, &jpeg.Options{Quality: 90}); err != nil {
-		return data
+		return data, false
 	}
-	return out.Bytes()
+	return out.Bytes(), true
 }
 
-func (c *Client) downloadImage(imageURL string) ([]byte, error) {
+func (c *Client) downloadImage(imageURL string) ([]byte, string, error) {
+	if imageURL == "" {
+		return nil, "", fmt.Errorf("image_url vazio")
+	}
 	req, err := http.NewRequest(http.MethodGet, imageURL, nil)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
-	req.Header.Set("User-Agent", "Mozilla/5.0")
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+	req.Header.Set("Referer", "https://www.mercadolivre.com.br/")
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("status %d ao baixar imagem", resp.StatusCode)
+		return nil, "", fmt.Errorf("status %d ao baixar imagem", resp.StatusCode)
 	}
-	return io.ReadAll(resp.Body)
+	contentType := resp.Header.Get("Content-Type")
+	data, err := io.ReadAll(resp.Body)
+	return data, contentType, err
 }
 
 func writeFormField(w *multipart.Writer, field, value string) error {
