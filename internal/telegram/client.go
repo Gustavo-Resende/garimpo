@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"mime/multipart"
 	"net/http"
+	"path"
 	"strings"
 	"time"
 
@@ -115,6 +117,108 @@ func (c *Client) SendProductForReviewWithFileID(p queue.Product, fileID string) 
 		return 0, fmt.Errorf("telegram: sendPhoto (file_id): %s", result.Description)
 	}
 	return result.Result.MessageID, nil
+}
+
+// SendProductForReviewUpload baixa a imagem do produto e envia via multipart/form-data.
+// Usar quando a URL da imagem não é acessível diretamente pelo Telegram (ex: Mercado Livre).
+func (c *Client) SendProductForReviewUpload(p queue.Product) (int, error) {
+	imageData, err := c.downloadImage(p.ImageURL)
+	if err != nil {
+		return 0, fmt.Errorf("telegram: download imagem: %w", err)
+	}
+
+	caption := buildCaption(p)
+	keyboard := inlineKeyboard{
+		InlineKeyboard: [][]inlineButton{{
+			{Text: "✅ Aprovar", CallbackData: fmt.Sprintf("approve:%d", p.ID)},
+			{Text: "❌ Recusar", CallbackData: fmt.Sprintf("reject:%d", p.ID)},
+			{Text: "🖼️ Trocar imagem", CallbackData: fmt.Sprintf("change_image:%d", p.ID)},
+		}},
+	}
+	replyMarkup, err := json.Marshal(keyboard)
+	if err != nil {
+		return 0, fmt.Errorf("telegram: marshal keyboard: %w", err)
+	}
+
+	var buf bytes.Buffer
+	w := multipart.NewWriter(&buf)
+
+	_ = writeFormField(w, "chat_id", c.chatID)
+	_ = writeFormField(w, "caption", caption)
+	_ = writeFormField(w, "parse_mode", "HTML")
+	_ = writeFormField(w, "reply_markup", string(replyMarkup))
+
+	filename := path.Base(p.ImageURL)
+	if filename == "" || filename == "." {
+		filename = "image.jpg"
+	}
+	fw, err := w.CreateFormFile("photo", filename)
+	if err != nil {
+		return 0, fmt.Errorf("telegram: criar form file: %w", err)
+	}
+	if _, err := fw.Write(imageData); err != nil {
+		return 0, fmt.Errorf("telegram: escrever imagem no form: %w", err)
+	}
+	w.Close()
+
+	url := fmt.Sprintf(apiBase, c.botToken, "sendPhoto")
+	req, err := http.NewRequest(http.MethodPost, url, &buf)
+	if err != nil {
+		return 0, fmt.Errorf("telegram: build request sendPhoto multipart: %w", err)
+	}
+	req.Header.Set("Content-Type", w.FormDataContentType())
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return 0, fmt.Errorf("telegram: http sendPhoto multipart: %w", err)
+	}
+	defer resp.Body.Close()
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return 0, fmt.Errorf("telegram: ler resposta sendPhoto multipart: %w", err)
+	}
+
+	var result struct {
+		OK     bool `json:"ok"`
+		Result struct {
+			MessageID int `json:"message_id"`
+		} `json:"result"`
+		Description string `json:"description"`
+	}
+	if err := json.Unmarshal(respBody, &result); err != nil {
+		return 0, fmt.Errorf("telegram: decode sendPhoto multipart: %w", err)
+	}
+	if !result.OK {
+		return 0, fmt.Errorf("telegram: sendPhoto multipart: %s", result.Description)
+	}
+	return result.Result.MessageID, nil
+}
+
+func (c *Client) downloadImage(imageURL string) ([]byte, error) {
+	req, err := http.NewRequest(http.MethodGet, imageURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("User-Agent", "Mozilla/5.0")
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("status %d ao baixar imagem", resp.StatusCode)
+	}
+	return io.ReadAll(resp.Body)
+}
+
+func writeFormField(w *multipart.Writer, field, value string) error {
+	fw, err := w.CreateFormField(field)
+	if err != nil {
+		return err
+	}
+	_, err = fw.Write([]byte(value))
+	return err
 }
 
 // EditMessageCaption edita o caption de uma mensagem existente (sem botões).

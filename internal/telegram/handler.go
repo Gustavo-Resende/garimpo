@@ -299,9 +299,9 @@ func (h *Handler) sendMLProductsForReview(products []sheets.MLProduct) int {
 			continue
 		}
 
-		msgID, err := h.client.SendProductForReview(*saved)
+		msgID, err := h.client.SendProductForReviewUpload(*saved)
 		if err != nil {
-			h.log.Error("telegram: /mlenvia SendProductForReview", "product", mp.ProductName, "err", err)
+			h.log.Error("telegram: /mlenvia SendProductForReviewUpload", "product", mp.ProductName, "err", err)
 			continue
 		}
 		if err := h.q.SetTelegramMessageID(saved.ID, msgID); err != nil {
