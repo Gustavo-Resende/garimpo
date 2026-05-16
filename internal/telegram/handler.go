@@ -299,6 +299,18 @@ func (h *Handler) sendMLProductsForReview(products []sheets.MLProduct) int {
 			continue
 		}
 
+		// Sempre atualiza image_url com o valor atual da planilha —
+		// registros antigos podem ter URL incorreta de quando o mapeamento estava errado.
+		if mp.ImageURL != "" && mp.ImageURL != saved.ImageURL {
+			if err := h.q.SetImageURL(saved.ID, mp.ImageURL); err != nil {
+				h.log.Warn("telegram: /mlenvia SetImageURL", "id", saved.ID, "err", err)
+			} else {
+				saved.ImageURL = mp.ImageURL
+			}
+		}
+
+		h.log.Info("mlenvia: enviando imagem", "image_url", saved.ImageURL)
+
 		msgID, err := h.client.SendProductForReviewUpload(*saved)
 		if err != nil {
 			h.log.Error("telegram: /mlenvia SendProductForReviewUpload", "product", mp.ProductName, "err", err)
