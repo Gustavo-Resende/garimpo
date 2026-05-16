@@ -1,31 +1,37 @@
 package telegram
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/Gustavo-Resende/garimpo/internal/queue"
 )
 
 type Handler struct {
-	client        *Client
-	q             *queue.Queue
-	log           *slog.Logger
-	onExtract     func() int
-	mu            sync.Mutex
-	awaitingImage map[int]int // messageID → productID
+	client         *Client
+	q              *queue.Queue
+	log            *slog.Logger
+	onExtract      func() int
+	n8nWebhookURL  string
+	mu             sync.Mutex
+	awaitingImage  map[int]int // messageID → productID
 }
 
-func NewHandler(client *Client, q *queue.Queue, log *slog.Logger, onExtract func() int) *Handler {
+func NewHandler(client *Client, q *queue.Queue, log *slog.Logger, onExtract func() int, n8nWebhookURL string) *Handler {
 	return &Handler{
 		client:        client,
 		q:             q,
 		log:           log,
 		onExtract:     onExtract,
+		n8nWebhookURL: n8nWebhookURL,
 		awaitingImage: make(map[int]int),
 	}
 }
@@ -72,17 +78,67 @@ func (h *Handler) processUpdate(u update) {
 }
 
 func (h *Handler) handleText(msg *message) {
-	if msg.Text != "/buscar" {
+	switch {
+	case msg.Text == "/buscar":
+		if err := h.client.SendNotification("🔍 Buscando novos produtos..."); err != nil {
+			h.log.Warn("telegram: SendNotification /buscar início", "err", err)
+		}
+		added := h.onExtract()
+		reply := fmt.Sprintf("✅ Busca concluída — %d novos produtos enviados para curadoria", added)
+		if err := h.client.SendNotification(reply); err != nil {
+			h.log.Warn("telegram: SendNotification /buscar resultado", "err", err)
+		}
+
+	case strings.HasPrefix(msg.Text, "/ml "):
+		link := strings.TrimPrefix(msg.Text, "/ml ")
+		if !strings.HasPrefix(link, "http") {
+			if err := h.client.SendNotification("❌ Link inválido. Use: /ml https://..."); err != nil {
+				h.log.Warn("telegram: SendNotification /ml link inválido", "err", err)
+			}
+			return
+		}
+		h.handleMLLink(link)
+	}
+}
+
+func (h *Handler) handleMLLink(link string) {
+	if h.n8nWebhookURL == "" {
+		h.log.Warn("telegram: /ml recebido mas N8N_WEBHOOK_URL não configurado")
+		if err := h.client.SendNotification("❌ Webhook n8n não configurado."); err != nil {
+			h.log.Warn("telegram: SendNotification /ml sem webhook", "err", err)
+		}
 		return
 	}
-	if err := h.client.SendNotification("🔍 Buscando novos produtos..."); err != nil {
-		h.log.Warn("telegram: SendNotification /buscar início", "err", err)
+
+	body, err := json.Marshal(map[string]string{"url": link})
+	if err != nil {
+		h.log.Error("telegram: /ml json.Marshal", "err", err)
+		return
 	}
-	added := h.onExtract()
-	reply := fmt.Sprintf("✅ Busca concluída — %d novos produtos enviados para curadoria", added)
-	if err := h.client.SendNotification(reply); err != nil {
-		h.log.Warn("telegram: SendNotification /buscar resultado", "err", err)
+
+	httpClient := &http.Client{Timeout: 10 * time.Second}
+	resp, err := httpClient.Post(h.n8nWebhookURL, "application/json", bytes.NewReader(body))
+	if err != nil {
+		h.log.Error("telegram: /ml POST webhook", "err", err)
+		if notifyErr := h.client.SendNotification("❌ Erro ao processar o link. Tente novamente."); notifyErr != nil {
+			h.log.Warn("telegram: SendNotification /ml erro", "err", notifyErr)
+		}
+		return
 	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		h.log.Error("telegram: /ml webhook retornou status inesperado", "status", resp.StatusCode)
+		if notifyErr := h.client.SendNotification("❌ Erro ao processar o link. Tente novamente."); notifyErr != nil {
+			h.log.Warn("telegram: SendNotification /ml status erro", "err", notifyErr)
+		}
+		return
+	}
+
+	if err := h.client.SendNotification("✅ Link enviado para processamento! Aguarde alguns instantes e verifique a planilha."); err != nil {
+		h.log.Warn("telegram: SendNotification /ml sucesso", "err", err)
+	}
+	h.log.Info("telegram: /ml link enviado ao n8n", "url", link)
 }
 
 func (h *Handler) handleCallback(cb *callbackQuery) {

@@ -67,6 +67,7 @@ func main() {
 	evolutionGroup    := mustEnv("EVOLUTION_GROUP_JID")
 	telegramToken     := mustEnv("TELEGRAM_BOT_TOKEN")
 	telegramChatID    := mustEnv("TELEGRAM_CHAT_ID")
+	n8nWebhookURL     := os.Getenv("N8N_WEBHOOK_URL")
 	dbPath            := mustEnv("DB_PATH")
 
 	minCommission   := envFloat("MIN_COMMISSION", 0.08)
@@ -132,7 +133,7 @@ func main() {
 	onExtract := func() int {
 		return worker.RunExtractionOnce(shopeeClient, telegramClient, q, extractorCfg, log)
 	}
-	telegramHandler := telegram.NewHandler(telegramClient, q, log, onExtract)
+	telegramHandler := telegram.NewHandler(telegramClient, q, log, onExtract, n8nWebhookURL)
 
 	go worker.RunExtractor(shopeeClient, telegramClient, q, extractorCfg, log)
 	go worker.RunPoster(q, geminiClient, evolutionClient, telegramClient, posterCfg, log)
