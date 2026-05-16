@@ -153,14 +153,51 @@ func (c *Client) SendProductForReviewUpload(p queue.Product) (int, error) {
 	slog.Info("telegram: imagem pronta", "content_type", contentType, "size_bytes", len(raw), "jpeg_encode_ok", encodeOK)
 
 	if !encodeOK {
-		// Fallback: tenta enviar a URL diretamente
 		slog.Warn("telegram: conversão JPEG falhou, tentando URL direta", "url", resolvedURL)
 		pFallback := p
 		pFallback.ImageURL = resolvedURL
 		return c.SendProductForReview(pFallback)
 	}
 
-	caption := buildCaption(p)
+	return c.uploadPhotoMultipart(p, imageData, buildCaption(p))
+}
+
+// SendMLProductForReviewUpload é igual a SendProductForReviewUpload mas usa um título
+// gerado pelo Gemini em vez de extrair do nome do produto.
+func (c *Client) SendMLProductForReviewUpload(p queue.Product, catchyTitle string) (int, error) {
+	raw, contentType, err := c.downloadImage(p.ImageURL)
+	if err != nil {
+		return 0, fmt.Errorf("telegram: download imagem url=%q: %w", p.ImageURL, err)
+	}
+
+	resolvedURL := p.ImageURL
+	if strings.Contains(contentType, "text/html") {
+		imageURL := extractOGImage(raw)
+		if imageURL == "" {
+			return 0, fmt.Errorf("telegram: URL é página HTML mas og:image não encontrado: %s", p.ImageURL)
+		}
+		slog.Info("telegram: extraindo imagem via og:image", "page", p.ImageURL, "image", imageURL)
+		resolvedURL = imageURL
+		raw, contentType, err = c.downloadImage(imageURL)
+		if err != nil {
+			return 0, fmt.Errorf("telegram: download og:image url=%q: %w", imageURL, err)
+		}
+	}
+
+	imageData, encodeOK := toJPEG(raw)
+	slog.Info("telegram: imagem pronta", "content_type", contentType, "size_bytes", len(raw), "jpeg_encode_ok", encodeOK)
+
+	if !encodeOK {
+		slog.Warn("telegram: conversão JPEG falhou, tentando URL direta", "url", resolvedURL)
+		pFallback := p
+		pFallback.ImageURL = resolvedURL
+		return c.SendProductForReview(pFallback)
+	}
+
+	return c.uploadPhotoMultipart(p, imageData, buildMLCaption(p, catchyTitle))
+}
+
+func (c *Client) uploadPhotoMultipart(p queue.Product, imageData []byte, caption string) (int, error) {
 	keyboard := inlineKeyboard{
 		InlineKeyboard: [][]inlineButton{{
 			{Text: "✅ Aprovar", CallbackData: fmt.Sprintf("approve:%d", p.ID)},
@@ -361,6 +398,26 @@ func (c *Client) post(method string, payload any, out any) error {
 		return fmt.Errorf("telegram: decode response %s: %w", method, err)
 	}
 	return nil
+}
+
+// buildMLCaption gera o caption HTML para produtos do Mercado Livre com título gerado pelo Gemini.
+func buildMLCaption(p queue.Product, catchyTitle string) string {
+	if catchyTitle == "" {
+		catchyTitle = buildTitle(p.Title)
+	}
+
+	if p.Discount > 0 {
+		original := p.Price / (1 - float64(p.Discount)/100)
+		original = math.Round(original*100) / 100
+		return fmt.Sprintf(
+			"<b>%s</b>\n\n%s\n\n❌ De <s>R$ %.2f</s>\n✅ por R$ %.2f\n\n👉 %s\n\n🛒 Oferta verificada no Mercado Livre",
+			catchyTitle, p.Title, original, p.Price, p.OfferLink,
+		)
+	}
+	return fmt.Sprintf(
+		"<b>%s</b>\n\n%s\n\nR$ %.2f\n\n👉 %s\n\n🛒 Oferta verificada no Mercado Livre",
+		catchyTitle, p.Title, p.Price, p.OfferLink,
+	)
 }
 
 // buildCaption gera o caption HTML para o produto.

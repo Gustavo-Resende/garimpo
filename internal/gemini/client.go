@@ -30,20 +30,17 @@ Exemplos:
 MIZUNO DE CORRIDA
 Tênis Mizuno Goya 👟
 ❌ De ~R$ 349~
-✅ por R$ 188 🦸🏻‍♂️
-👉 https://s.shopee.com.br/xxx
+✅ por R$ 188👉 https://s.shopee.com.br/xxx
 
 7 CONTO CADA POTE
 Kit 10 Potes de Vidro Hermético 🫙
 ❌ De ~R$ 149~
-✅ por R$ 73 🦸🏻‍♂️
-👉 https://s.shopee.com.br/xxx
+✅ por R$ 73👉 https://s.shopee.com.br/xxx
 
 KIT COMPLETO PRA TREINO
 Kit 5 Shorts Masculino Dry Fit 🩳
 ❌ De ~R$ 180~
-✅ por R$ 84 🦸🏻‍♂️
-👉 https://s.shopee.com.br/xxx
+✅ por R$ 84👉 https://s.shopee.com.br/xxx
 
 Como calcular o preço original:
 precoOriginal = priceMax / (1 - priceDiscountRate/100)
@@ -53,8 +50,7 @@ Regras obrigatórias:
 1. TÍTULO em caixa alta, criativo, máx 4 palavras
 2. Nome do produto limpo, sem repetição, sem caixa alta desnecessária
 3. Emoji temático no final do nome
-4. Linha de preço no formato exato: ❌ De ~R$ [original]~ / ✅ por R$ [atual] 🦸🏻‍♂️
-5. Link sempre precedido de 👉, última linha, nada depois
+4. Linha de preço no formato exato: ❌ De ~R$ [original]~ / ✅ por R$ [atual]5. Link sempre precedido de 👉, última linha, nada depois
 6. \n\n entre cada bloco
 7. Tom informal em português brasileiro
 8. Não inventar preços
@@ -230,6 +226,44 @@ func (c *Client) GenerateMessage(p queue.Product) (string, error) {
 		lastErr = err
 	}
 	return "", lastErr
+}
+
+// GenerateMLTitle gera uma frase chamativa em caixa alta (máx 4 palavras) para o produto.
+// Em caso de erro, retorna o nome em caixa alta como fallback.
+func (c *Client) GenerateMLTitle(productName string) string {
+	prompt := fmt.Sprintf(`Crie UMA frase chamativa para divulgar este produto no WhatsApp.
+Regras obrigatórias:
+- Máximo 4 palavras
+- Tudo em CAIXA ALTA
+- Em português brasileiro
+- Animada e direta, focada no benefício ou apelo do produto
+- Sem emojis, sem pontuação
+Exemplos: "MALBECÃO NO PRECINHO", "AS MAIS PROCURADAS", "KIT COMPLETO PRA TREINO", "CUSTO ZERO PRA VOCÊ"
+Produto: %s
+Responda APENAS com a frase, sem explicações.`, productName)
+
+	body := geminiRequest{
+		Contents: []geminiContent{{Parts: []geminiPart{{Text: prompt}}}},
+	}
+
+	for range 3 {
+		text, err := c.callAPI(body)
+		if err == nil {
+			title := strings.TrimSpace(text)
+			title = strings.Trim(title, `"'`)
+			title = strings.ToUpper(title)
+			if title != "" {
+				return title
+			}
+		}
+	}
+
+	// Fallback: primeiras 4 palavras do nome em caixa alta
+	words := strings.Fields(productName)
+	if len(words) > 4 {
+		words = words[:4]
+	}
+	return strings.ToUpper(strings.Join(words, " "))
 }
 
 func sourceLabel(source string) string {

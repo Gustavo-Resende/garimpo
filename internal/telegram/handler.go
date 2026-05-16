@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Gustavo-Resende/garimpo/internal/gemini"
 	"github.com/Gustavo-Resende/garimpo/internal/queue"
 	"github.com/Gustavo-Resende/garimpo/internal/sheets"
 )
@@ -20,6 +21,7 @@ type Handler struct {
 	client        *Client
 	q             *queue.Queue
 	sheetsClient  *sheets.Client
+	geminiClient  *gemini.Client
 	log           *slog.Logger
 	onExtract     func() int
 	n8nWebhookURL string
@@ -27,11 +29,12 @@ type Handler struct {
 	awaitingImage map[int]int // messageID → productID
 }
 
-func NewHandler(client *Client, q *queue.Queue, sheetsClient *sheets.Client, log *slog.Logger, onExtract func() int, n8nWebhookURL string) *Handler {
+func NewHandler(client *Client, q *queue.Queue, sheetsClient *sheets.Client, geminiClient *gemini.Client, log *slog.Logger, onExtract func() int, n8nWebhookURL string) *Handler {
 	return &Handler{
 		client:        client,
 		q:             q,
 		sheetsClient:  sheetsClient,
+		geminiClient:  geminiClient,
 		log:           log,
 		onExtract:     onExtract,
 		n8nWebhookURL: n8nWebhookURL,
@@ -311,7 +314,13 @@ func (h *Handler) sendMLProductsForReview(products []sheets.MLProduct) int {
 
 		h.log.Info("mlenvia: enviando imagem", "image_url", saved.ImageURL)
 
-		msgID, err := h.client.SendProductForReviewUpload(*saved)
+		catchyTitle := ""
+		if h.geminiClient != nil {
+			catchyTitle = h.geminiClient.GenerateMLTitle(mp.ProductName)
+			h.log.Info("mlenvia: título gerado", "title", catchyTitle)
+		}
+
+		msgID, err := h.client.SendMLProductForReviewUpload(*saved, catchyTitle)
 		if err != nil {
 			h.log.Error("telegram: /mlenvia SendProductForReviewUpload", "product", mp.ProductName, "err", err)
 			continue
