@@ -222,6 +222,16 @@ func (q *Queue) SetImageURL(id int, imageURL string) error {
 	return err
 }
 
+func (q *Queue) UpdateProductData(id int, title string, price float64, discount int) error {
+	stmt, err := q.db.Prepare(`UPDATE queue SET title = ?, price = ?, discount = ? WHERE id = ?`)
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+	_, err = stmt.Exec(title, price, discount, id)
+	return err
+}
+
 func (q *Queue) CountPending() (int, error) {
 	var count int
 	err := q.db.QueryRow(`SELECT COUNT(*) FROM queue WHERE status = 'pending'`).Scan(&count)

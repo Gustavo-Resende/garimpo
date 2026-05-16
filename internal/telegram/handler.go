@@ -302,8 +302,9 @@ func (h *Handler) sendMLProductsForReview(products []sheets.MLProduct) int {
 			continue
 		}
 
-		// Sincroniza campos do Sheets para o objeto em memória — registros antigos
-		// no banco podem ter title/price/discount/image_url incorretos do mapeamento antigo.
+		// Persiste campos corretos no banco — registros podem ter sido inseridos com dados
+		// do mapeamento antigo de colunas. A planilha será limpa após este envio, então
+		// todos os acessos futuros (troca de imagem, postagem) dependem do banco estar correto.
 		if mp.ProductName != "" {
 			saved.Title = mp.ProductName
 		}
@@ -312,6 +313,9 @@ func (h *Handler) sendMLProductsForReview(products []sheets.MLProduct) int {
 		}
 		if mp.Discount != saved.Discount {
 			saved.Discount = mp.Discount
+		}
+		if err := h.q.UpdateProductData(saved.ID, saved.Title, saved.Price, saved.Discount); err != nil {
+			h.log.Warn("telegram: /mlenvia UpdateProductData", "id", saved.ID, "err", err)
 		}
 		if mp.ImageURL != "" && mp.ImageURL != saved.ImageURL {
 			if err := h.q.SetImageURL(saved.ID, mp.ImageURL); err != nil {
@@ -483,29 +487,6 @@ func (h *Handler) handlePhoto(msg *message) {
 	if err != nil || p == nil {
 		h.log.Error("telegram: GetByID após troca de imagem", "id", productID, "err", err)
 		return
-	}
-
-	// Sincroniza dados da planilha para corrigir registros stale (ex: mapeamento antigo de colunas).
-	if h.sheetsClient != nil && p.Source == "mercadolivre" {
-		products, err := h.sheetsClient.ReadAllProducts()
-		if err == nil {
-			for _, mp := range products {
-				if mp.OfferLink == p.OfferLink {
-					if mp.ProductName != "" {
-						p.Title = mp.ProductName
-					}
-					if mp.Price > 0 {
-						p.Price = mp.Price
-					}
-					if mp.Discount != p.Discount {
-						p.Discount = mp.Discount
-					}
-					break
-				}
-			}
-		} else {
-			h.log.Warn("telegram: handlePhoto ReadAllProducts", "err", err)
-		}
 	}
 
 	// Reenvia usando file_id — URLs públicas de arquivos de usuários não são
