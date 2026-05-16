@@ -302,8 +302,17 @@ func (h *Handler) sendMLProductsForReview(products []sheets.MLProduct) int {
 			continue
 		}
 
-		// Sempre atualiza image_url com o valor atual da planilha —
-		// registros antigos podem ter URL incorreta de quando o mapeamento estava errado.
+		// Sincroniza campos do Sheets para o objeto em memória — registros antigos
+		// no banco podem ter title/price/discount/image_url incorretos do mapeamento antigo.
+		if mp.ProductName != "" {
+			saved.Title = mp.ProductName
+		}
+		if mp.Price > 0 {
+			saved.Price = mp.Price
+		}
+		if mp.Discount != saved.Discount {
+			saved.Discount = mp.Discount
+		}
 		if mp.ImageURL != "" && mp.ImageURL != saved.ImageURL {
 			if err := h.q.SetImageURL(saved.ID, mp.ImageURL); err != nil {
 				h.log.Warn("telegram: /mlenvia SetImageURL", "id", saved.ID, "err", err)
