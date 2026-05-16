@@ -177,6 +177,12 @@ func cellStr(row []interface{}, i int) string {
 
 func cellFloat(row []interface{}, i int) float64 {
 	s := cellStr(row, i)
+	// Remove prefixo monetário e espaços (ex: "R$ ", "R$")
+	s = strings.TrimSpace(s)
+	s = strings.TrimPrefix(s, "R$")
+	s = strings.TrimSpace(s)
+	// Remove pontos de milhar e troca vírgula decimal por ponto (formato pt-BR)
+	s = strings.ReplaceAll(s, ".", "")
 	s = strings.ReplaceAll(s, ",", ".")
 	f, _ := strconv.ParseFloat(s, 64)
 	return f
