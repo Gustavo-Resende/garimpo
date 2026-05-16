@@ -12,6 +12,7 @@ import (
 	"math"
 	"mime/multipart"
 	"net/http"
+	"regexp"
 	"strings"
 	"time"
 
@@ -19,6 +20,8 @@ import (
 
 	"github.com/Gustavo-Resende/garimpo/internal/queue"
 )
+
+var ogImageRe = regexp.MustCompile(`(?i)<meta[^>]+property=["']og:image["'][^>]+content=["']([^"']+)["']|<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:image["']`)
 
 const apiBase = "https://api.telegram.org/bot%s/%s"
 
@@ -131,8 +134,21 @@ func (c *Client) SendProductForReviewUpload(p queue.Product) (int, error) {
 	if err != nil {
 		return 0, fmt.Errorf("telegram: download imagem url=%q: %w", p.ImageURL, err)
 	}
+
+	if strings.Contains(contentType, "text/html") {
+		imageURL := extractOGImage(raw)
+		if imageURL == "" {
+			return 0, fmt.Errorf("telegram: URL é página HTML mas og:image não encontrado: %s", p.ImageURL)
+		}
+		slog.Info("telegram: extraindo imagem via og:image", "page", p.ImageURL, "image", imageURL)
+		raw, contentType, err = c.downloadImage(imageURL)
+		if err != nil {
+			return 0, fmt.Errorf("telegram: download og:image url=%q: %w", imageURL, err)
+		}
+	}
+
 	imageData, encodeOK := toJPEG(raw)
-	slog.Info("telegram: imagem baixada", "url", p.ImageURL, "content_type", contentType, "size_bytes", len(raw), "jpeg_encode_ok", encodeOK)
+	slog.Info("telegram: imagem pronta", "content_type", contentType, "size_bytes", len(raw), "jpeg_encode_ok", encodeOK)
 
 	caption := buildCaption(p)
 	keyboard := inlineKeyboard{
@@ -233,6 +249,17 @@ func (c *Client) downloadImage(imageURL string) ([]byte, string, error) {
 	contentType := resp.Header.Get("Content-Type")
 	data, err := io.ReadAll(resp.Body)
 	return data, contentType, err
+}
+
+func extractOGImage(html []byte) string {
+	m := ogImageRe.FindSubmatch(html)
+	if m == nil {
+		return ""
+	}
+	if len(m[1]) > 0 {
+		return string(m[1])
+	}
+	return string(m[2])
 }
 
 func writeFormField(w *multipart.Writer, field, value string) error {
