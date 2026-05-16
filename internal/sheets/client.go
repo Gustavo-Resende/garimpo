@@ -3,6 +3,7 @@ package sheets
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"math/rand"
 	"strconv"
 	"strings"
@@ -57,6 +58,23 @@ func (c *Client) ReadAllProducts() ([]MLProduct, error) {
 	resp, err := c.svc.Spreadsheets.Values.Get(c.spreadsheetID, dataRange).Do()
 	if err != nil {
 		return nil, fmt.Errorf("sheets: ReadAllProducts: %w", err)
+	}
+	for i, row := range resp.Values {
+		cols := make([]string, 8)
+		for j := 0; j < 8 && j < len(row); j++ {
+			cols[j] = fmt.Sprintf("%v", row[j])
+		}
+		slog.Info("sheets: linha lida",
+			"row", i,
+			"product_name", cols[0],
+			"price", cols[1],
+			"discount", cols[2],
+			"category", cols[3],
+			"image_url", cols[4],
+			"product_link", cols[5],
+			"shop_name", cols[6],
+			"offer_link", cols[7],
+		)
 	}
 	return parseRows(resp.Values), nil
 }
