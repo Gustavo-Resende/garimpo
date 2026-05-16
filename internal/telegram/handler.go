@@ -485,6 +485,29 @@ func (h *Handler) handlePhoto(msg *message) {
 		return
 	}
 
+	// Sincroniza dados da planilha para corrigir registros stale (ex: mapeamento antigo de colunas).
+	if h.sheetsClient != nil && p.Source == "mercadolivre" {
+		products, err := h.sheetsClient.ReadAllProducts()
+		if err == nil {
+			for _, mp := range products {
+				if mp.OfferLink == p.OfferLink {
+					if mp.ProductName != "" {
+						p.Title = mp.ProductName
+					}
+					if mp.Price > 0 {
+						p.Price = mp.Price
+					}
+					if mp.Discount != p.Discount {
+						p.Discount = mp.Discount
+					}
+					break
+				}
+			}
+		} else {
+			h.log.Warn("telegram: handlePhoto ReadAllProducts", "err", err)
+		}
+	}
+
 	// Reenvia usando file_id — URLs públicas de arquivos de usuários não são
 	// acessíveis por bots via sendPhoto com URL.
 	newMsgID, err := h.client.SendProductForReviewWithFileID(*p, largest.FileID)
