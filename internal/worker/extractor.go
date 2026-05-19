@@ -34,7 +34,19 @@ func RunExtractionOnce(shopeeClient *shopee.Client, telegramClient *telegram.Cli
 				break
 			}
 
+			if p.ItemID != 0 {
+				seen, err := q.IsSeenItem(p.ItemID)
+				if err != nil {
+					log.Error("extractor: IsSeenItem", "item_id", p.ItemID, "err", err)
+				} else if seen {
+					log.Debug("extractor: skip itemId já visto", "item_id", p.ItemID)
+					totalSkipped++
+					continue
+				}
+			}
+
 			product := queue.Product{
+				ItemID:     p.ItemID,
 				Title:      p.ProductName,
 				Price:      p.PriceMax,
 				Discount:   p.PriceDiscountRate,
@@ -52,6 +64,12 @@ func RunExtractionOnce(shopeeClient *shopee.Client, telegramClient *telegram.Cli
 			if !inserted {
 				totalSkipped++
 				continue
+			}
+
+			if p.ItemID != 0 {
+				if err := q.MarkSeenItem(p.ItemID); err != nil {
+					log.Warn("extractor: MarkSeenItem", "item_id", p.ItemID, "err", err)
+				}
 			}
 			totalAdded++
 

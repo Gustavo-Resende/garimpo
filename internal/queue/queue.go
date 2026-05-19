@@ -7,6 +7,7 @@ import (
 
 type Product struct {
 	ID                int
+	ItemID            int64
 	Title             string
 	Price             float64
 	Discount          int
@@ -31,6 +32,7 @@ func NewQueue(db *sql.DB) *Queue {
 func Migrate(db *sql.DB) error {
 	_, err := db.Exec(`CREATE TABLE IF NOT EXISTS queue (
 		id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+		item_id             INTEGER,
 		title               TEXT NOT NULL,
 		price               REAL NOT NULL,
 		discount            INTEGER,
@@ -46,12 +48,22 @@ func Migrate(db *sql.DB) error {
 	if err != nil {
 		return err
 	}
-	// Migração não-destrutiva para bancos existentes.
-	_, err = db.Exec(`ALTER TABLE queue ADD COLUMN telegram_message_id INTEGER`)
-	if err != nil && !isSQLiteAlreadyExists(err) {
-		return err
+
+	// Migrações não-destrutivas para bancos existentes.
+	for _, col := range []string{
+		`ALTER TABLE queue ADD COLUMN telegram_message_id INTEGER`,
+		`ALTER TABLE queue ADD COLUMN item_id INTEGER`,
+	} {
+		if _, err := db.Exec(col); err != nil && !isSQLiteAlreadyExists(err) {
+			return err
+		}
 	}
-	return nil
+
+	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS seen_items (
+		item_id       INTEGER PRIMARY KEY,
+		first_seen_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+	)`)
+	return err
 }
 
 // isSQLiteAlreadyExists detecta o erro "duplicate column name" do SQLite.
@@ -76,8 +88,8 @@ func containsStr(s, sub string) bool {
 // Retorna (true, nil) se inserido, (false, nil) se já existia.
 func (q *Queue) Enqueue(p Product) (bool, error) {
 	stmt, err := q.db.Prepare(`INSERT OR IGNORE INTO queue
-		(title, price, discount, commission, image_url, offer_link, source, status)
-		VALUES (?, ?, ?, ?, ?, ?, ?, 'pending_review')`)
+		(item_id, title, price, discount, commission, image_url, offer_link, source, status)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending_review')`)
 	if err != nil {
 		return false, err
 	}
@@ -88,7 +100,12 @@ func (q *Queue) Enqueue(p Product) (bool, error) {
 		source = "shopee"
 	}
 
-	result, err := stmt.Exec(p.Title, p.Price, p.Discount, p.Commission, p.ImageURL, p.OfferLink, source)
+	var itemID any
+	if p.ItemID != 0 {
+		itemID = p.ItemID
+	}
+
+	result, err := stmt.Exec(itemID, p.Title, p.Price, p.Discount, p.Commission, p.ImageURL, p.OfferLink, source)
 	if err != nil {
 		return false, err
 	}
@@ -96,8 +113,21 @@ func (q *Queue) Enqueue(p Product) (bool, error) {
 	return rows > 0, err
 }
 
+// IsSeenItem retorna true se o itemId já foi visto em algum ciclo anterior.
+func (q *Queue) IsSeenItem(itemID int64) (bool, error) {
+	var count int
+	err := q.db.QueryRow(`SELECT COUNT(*) FROM seen_items WHERE item_id = ?`, itemID).Scan(&count)
+	return count > 0, err
+}
+
+// MarkSeenItem registra o itemId em seen_items. É idempotente (INSERT OR IGNORE).
+func (q *Queue) MarkSeenItem(itemID int64) error {
+	_, err := q.db.Exec(`INSERT OR IGNORE INTO seen_items (item_id) VALUES (?)`, itemID)
+	return err
+}
+
 func (q *Queue) GetByOfferLink(offerLink string) (*Product, error) {
-	stmt, err := q.db.Prepare(`SELECT id, title, price, discount, commission, image_url, offer_link, source, status, telegram_message_id, created_at, sent_at
+	stmt, err := q.db.Prepare(`SELECT id, item_id, title, price, discount, commission, image_url, offer_link, source, status, telegram_message_id, created_at, sent_at
 		FROM queue WHERE offer_link = ?`)
 	if err != nil {
 		return nil, err
@@ -108,7 +138,7 @@ func (q *Queue) GetByOfferLink(offerLink string) (*Product, error) {
 }
 
 func (q *Queue) Dequeue() (*Product, error) {
-	stmt, err := q.db.Prepare(`SELECT id, title, price, discount, commission, image_url, offer_link, source, status, telegram_message_id, created_at, sent_at
+	stmt, err := q.db.Prepare(`SELECT id, item_id, title, price, discount, commission, image_url, offer_link, source, status, telegram_message_id, created_at, sent_at
 		FROM queue WHERE status = 'pending' ORDER BY created_at ASC LIMIT 1`)
 	if err != nil {
 		return nil, err
@@ -119,7 +149,7 @@ func (q *Queue) Dequeue() (*Product, error) {
 }
 
 func (q *Queue) GetByID(id int) (*Product, error) {
-	stmt, err := q.db.Prepare(`SELECT id, title, price, discount, commission, image_url, offer_link, source, status, telegram_message_id, created_at, sent_at
+	stmt, err := q.db.Prepare(`SELECT id, item_id, title, price, discount, commission, image_url, offer_link, source, status, telegram_message_id, created_at, sent_at
 		FROM queue WHERE id = ?`)
 	if err != nil {
 		return nil, err
@@ -131,10 +161,11 @@ func (q *Queue) GetByID(id int) (*Product, error) {
 
 func scanProduct(row *sql.Row) (*Product, error) {
 	var p Product
+	var itemID sql.NullInt64
 	var sentAt sql.NullTime
 	var telegramMessageID sql.NullInt64
 	err := row.Scan(
-		&p.ID, &p.Title, &p.Price, &p.Discount, &p.Commission,
+		&p.ID, &itemID, &p.Title, &p.Price, &p.Discount, &p.Commission,
 		&p.ImageURL, &p.OfferLink, &p.Source, &p.Status, &telegramMessageID, &p.CreatedAt, &sentAt,
 	)
 	if err == sql.ErrNoRows {
@@ -142,6 +173,9 @@ func scanProduct(row *sql.Row) (*Product, error) {
 	}
 	if err != nil {
 		return nil, err
+	}
+	if itemID.Valid {
+		p.ItemID = itemID.Int64
 	}
 	if sentAt.Valid {
 		p.SentAt = &sentAt.Time
@@ -239,7 +273,7 @@ func (q *Queue) CountPending() (int, error) {
 }
 
 func (q *Queue) ListPending() ([]Product, error) {
-	rows, err := q.db.Query(`SELECT id, title, price, discount, commission, image_url, offer_link, source, status, telegram_message_id, created_at, sent_at
+	rows, err := q.db.Query(`SELECT id, item_id, title, price, discount, commission, image_url, offer_link, source, status, telegram_message_id, created_at, sent_at
 		FROM queue WHERE status = 'pending' ORDER BY created_at ASC`)
 	if err != nil {
 		return nil, err
@@ -249,13 +283,17 @@ func (q *Queue) ListPending() ([]Product, error) {
 	var products []Product
 	for rows.Next() {
 		var p Product
+		var itemID sql.NullInt64
 		var sentAt sql.NullTime
 		var telegramMessageID sql.NullInt64
 		if err := rows.Scan(
-			&p.ID, &p.Title, &p.Price, &p.Discount, &p.Commission,
+			&p.ID, &itemID, &p.Title, &p.Price, &p.Discount, &p.Commission,
 			&p.ImageURL, &p.OfferLink, &p.Source, &p.Status, &telegramMessageID, &p.CreatedAt, &sentAt,
 		); err != nil {
 			return nil, err
+		}
+		if itemID.Valid {
+			p.ItemID = itemID.Int64
 		}
 		if sentAt.Valid {
 			p.SentAt = &sentAt.Time

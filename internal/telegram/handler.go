@@ -390,7 +390,18 @@ func (h *Handler) handleShopeeLink(link string) {
 		return
 	}
 
+	if node.ItemID != 0 {
+		seen, err := h.q.IsSeenItem(node.ItemID)
+		if err != nil {
+			h.log.Error("telegram: /produto IsSeenItem", "item_id", node.ItemID, "err", err)
+		} else if seen {
+			h.notify("⚠️ Esse produto já foi postado anteriormente.")
+			return
+		}
+	}
+
 	product := queue.Product{
+		ItemID:     node.ItemID,
 		Title:      node.ProductName,
 		Price:      node.PriceMax,
 		Discount:   node.PriceDiscountRate,
@@ -409,6 +420,12 @@ func (h *Handler) handleShopeeLink(link string) {
 	if !inserted {
 		h.notify("⚠️ Produto já existe na fila.")
 		return
+	}
+
+	if node.ItemID != 0 {
+		if err := h.q.MarkSeenItem(node.ItemID); err != nil {
+			h.log.Warn("telegram: /produto MarkSeenItem", "item_id", node.ItemID, "err", err)
+		}
 	}
 
 	saved, err := h.q.GetByOfferLink(node.OfferLink)
