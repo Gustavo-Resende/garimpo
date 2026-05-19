@@ -15,10 +15,12 @@ import (
 	"github.com/Gustavo-Resende/garimpo/internal/gemini"
 	"github.com/Gustavo-Resende/garimpo/internal/queue"
 	"github.com/Gustavo-Resende/garimpo/internal/sheets"
+	"github.com/Gustavo-Resende/garimpo/internal/shopee"
 )
 
 type Handler struct {
 	client        *Client
+	shopeeClient  *shopee.Client
 	q             *queue.Queue
 	sheetsClient  *sheets.Client
 	geminiClient  *gemini.Client
@@ -29,9 +31,10 @@ type Handler struct {
 	awaitingImage map[int]int // messageID → productID
 }
 
-func NewHandler(client *Client, q *queue.Queue, sheetsClient *sheets.Client, geminiClient *gemini.Client, log *slog.Logger, onExtract func() int, n8nWebhookURL string) *Handler {
+func NewHandler(client *Client, shopeeClient *shopee.Client, q *queue.Queue, sheetsClient *sheets.Client, geminiClient *gemini.Client, log *slog.Logger, onExtract func() int, n8nWebhookURL string) *Handler {
 	return &Handler{
 		client:        client,
+		shopeeClient:  shopeeClient,
 		q:             q,
 		sheetsClient:  sheetsClient,
 		geminiClient:  geminiClient,
@@ -84,8 +87,21 @@ func (h *Handler) processUpdate(u update) {
 }
 
 func (h *Handler) handleText(msg *message) {
+	// Em grupos, Telegram envia comandos como "/cmd@BotName args". Normaliza para "/cmd args".
+	text := msg.Text
+	if i := strings.Index(text, "@"); i > 0 && strings.HasPrefix(text, "/") {
+		spaceIdx := strings.Index(text, " ")
+		if spaceIdx == -1 || i < spaceIdx {
+			rest := ""
+			if spaceIdx > 0 {
+				rest = text[spaceIdx:]
+			}
+			text = text[:i] + rest
+		}
+	}
+
 	switch {
-	case msg.Text == "/buscar":
+	case text == "/buscar":
 		if err := h.client.SendNotification("🔍 Buscando novos produtos..."); err != nil {
 			h.log.Warn("telegram: SendNotification /buscar início", "err", err)
 		}
@@ -95,8 +111,16 @@ func (h *Handler) handleText(msg *message) {
 			h.log.Warn("telegram: SendNotification /buscar resultado", "err", err)
 		}
 
-	case strings.HasPrefix(msg.Text, "/ml "):
-		link := strings.TrimPrefix(msg.Text, "/ml ")
+	case strings.HasPrefix(text, "/produto "):
+		link := strings.TrimSpace(strings.TrimPrefix(text, "/produto "))
+		if !strings.HasPrefix(link, "http") {
+			h.notify("❌ Link inválido. Use: /produto https://...")
+			return
+		}
+		h.handleShopeeLink(link)
+
+	case strings.HasPrefix(text, "/ml "):
+		link := strings.TrimPrefix(text, "/ml ")
 		if !strings.HasPrefix(link, "http") {
 			if err := h.client.SendNotification("❌ Link inválido. Use: /ml https://..."); err != nil {
 				h.log.Warn("telegram: SendNotification /ml link inválido", "err", err)
@@ -105,22 +129,22 @@ func (h *Handler) handleText(msg *message) {
 		}
 		h.handleMLLink(link)
 
-	case msg.Text == "/mlenvia":
+	case text == "/mlenvia":
 		h.handleMLEnvia(false)
 
-	case msg.Text == "/mlconfirma":
+	case text == "/mlconfirma":
 		h.handleMLEnvia(true)
 
-	case msg.Text == "/mllista":
+	case text == "/mllista":
 		h.handleMLLista()
 
-	case msg.Text == "/mlrandomizar":
+	case text == "/mlrandomizar":
 		h.handleMLRandomizar()
 
-	case msg.Text == "/mlapagar":
+	case text == "/mlapagar":
 		h.handleMLApagar()
 
-	case msg.Text == "/lista":
+	case text == "/lista":
 		h.handleLista()
 	}
 }
@@ -353,6 +377,57 @@ func (h *Handler) notify(text string) {
 	if err := h.client.SendNotification(text); err != nil {
 		h.log.Warn("telegram: SendNotification", "err", err)
 	}
+}
+
+// handleShopeeLink busca um produto Shopee pelo link, enfileira e envia para curadoria no Telegram.
+func (h *Handler) handleShopeeLink(link string) {
+	h.notify("🔍 Buscando dados do produto...")
+
+	node, err := h.shopeeClient.FetchByURL(link)
+	if err != nil {
+		h.log.Warn("telegram: /produto FetchByURL", "link", link, "err", err)
+		h.notify("❌ Não consegui extrair dados desse produto. Tente outro link.")
+		return
+	}
+
+	product := queue.Product{
+		Title:      node.ProductName,
+		Price:      node.PriceMax,
+		Discount:   node.PriceDiscountRate,
+		Commission: node.CommissionRate,
+		ImageURL:   node.ImageURL,
+		OfferLink:  node.OfferLink,
+		Source:     "shopee",
+	}
+
+	inserted, err := h.q.Enqueue(product)
+	if err != nil {
+		h.log.Error("telegram: /produto Enqueue", "err", err)
+		h.notify("❌ Erro ao salvar o produto. Tente novamente.")
+		return
+	}
+	if !inserted {
+		h.notify("⚠️ Produto já existe na fila.")
+		return
+	}
+
+	saved, err := h.q.GetByOfferLink(node.OfferLink)
+	if err != nil || saved == nil {
+		h.log.Error("telegram: /produto GetByOfferLink", "offer_link", node.OfferLink, "err", err)
+		h.notify("❌ Erro ao recuperar produto salvo.")
+		return
+	}
+
+	msgID, err := h.client.SendProductForReview(*saved)
+	if err != nil {
+		h.log.Error("telegram: /produto SendProductForReview", "err", err)
+		h.notify("❌ Erro ao enviar para curadoria.")
+		return
+	}
+	if err := h.q.SetTelegramMessageID(saved.ID, msgID); err != nil {
+		h.log.Warn("telegram: /produto SetTelegramMessageID", "id", saved.ID, "err", err)
+	}
+	h.log.Info("telegram: /produto enviado para curadoria", "title", node.ProductName, "id", saved.ID)
 }
 
 func (h *Handler) handleMLLink(link string) {

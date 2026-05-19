@@ -149,7 +149,7 @@ func main() {
 	onExtract := func() int {
 		return worker.RunExtractionOnce(shopeeClient, telegramClient, q, extractorCfg, log)
 	}
-	telegramHandler := telegram.NewHandler(telegramClient, q, sheetsClient, geminiClient, log, onExtract, n8nWebhookURL)
+	telegramHandler := telegram.NewHandler(telegramClient, shopeeClient, q, sheetsClient, geminiClient, log, onExtract, n8nWebhookURL)
 
 	go worker.RunExtractor(shopeeClient, telegramClient, q, extractorCfg, log)
 	go worker.RunPoster(q, geminiClient, evolutionClient, telegramClient, posterCfg, log)
