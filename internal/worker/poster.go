@@ -4,10 +4,10 @@ import (
 	"fmt"
 	"log/slog"
 	"math/rand"
+	"strings"
 	"time"
 
 	"github.com/Gustavo-Resende/garimpo/internal/evolution"
-	"github.com/Gustavo-Resende/garimpo/internal/gemini"
 	"github.com/Gustavo-Resende/garimpo/internal/queue"
 	"github.com/Gustavo-Resende/garimpo/internal/scheduler"
 	"github.com/Gustavo-Resende/garimpo/internal/telegram"
@@ -21,7 +21,7 @@ type PosterConfig struct {
 	LowQueueThreshold int
 }
 
-func RunPoster(q *queue.Queue, gem *gemini.Client, evo *evolution.Client, tg *telegram.Client, cfg PosterConfig, log *slog.Logger) {
+func RunPoster(q *queue.Queue, evo *evolution.Client, tg *telegram.Client, cfg PosterConfig, log *slog.Logger) {
 	var lastEmptyNotification time.Time
 	var lastLowNotification time.Time
 
@@ -66,15 +66,7 @@ func RunPoster(q *queue.Queue, gem *gemini.Client, evo *evolution.Client, tg *te
 			return
 		}
 
-		msg, err := gem.GenerateMessage(*product)
-		if err != nil {
-			log.Error("poster: GenerateMessage", "id", product.ID, "err", err)
-			if markErr := q.MarkFailed(product.ID); markErr != nil {
-				log.Error("poster: MarkFailed", "id", product.ID, "err", markErr)
-			}
-			return
-		}
-
+		msg := formatMessage(*product)
 		log.Info("poster: mensagem gerada", "id", product.ID, "msg", msg)
 
 		if err := evo.SendMessage(product.ImageURL, msg); err != nil {
@@ -100,4 +92,31 @@ func RunPoster(q *queue.Queue, gem *gemini.Client, evo *evolution.Client, tg *te
 		log.Info("poster: próximo post em X minutos", "minutos", int(interval.Minutes()))
 		time.Sleep(interval)
 	}
+}
+
+func formatMessage(p queue.Product) string {
+	var sb strings.Builder
+
+	fmt.Fprintf(&sb, "🔥 %s\n\n", strings.ToUpper(p.Title))
+
+	if p.Discount > 0 {
+		original := p.Price / (1 - float64(p.Discount)/100)
+		fmt.Fprintf(&sb, "❌ De ~R$ %s~\n", formatPrice(original))
+		fmt.Fprintf(&sb, "✅ Por R$ %s (-%d%%)\n\n", formatPrice(p.Price), p.Discount)
+	} else {
+		fmt.Fprintf(&sb, "✅ R$ %s\n\n", formatPrice(p.Price))
+	}
+
+	if p.Source == "mercadolivre" {
+		sb.WriteString("🛒 Oferta verificada no Mercado Livre\n")
+	} else {
+		sb.WriteString("🛒 Oferta verificada na Shopee\n")
+	}
+	fmt.Fprintf(&sb, "👉 %s", p.OfferLink)
+
+	return sb.String()
+}
+
+func formatPrice(v float64) string {
+	return strings.ReplaceAll(fmt.Sprintf("%.2f", v), ".", ",")
 }

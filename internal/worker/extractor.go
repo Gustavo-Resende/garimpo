@@ -2,6 +2,8 @@ package worker
 
 import (
 	"log/slog"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/Gustavo-Resende/garimpo/internal/queue"
@@ -16,21 +18,70 @@ type ExtractorConfig struct {
 	ExtractionInterval time.Duration
 	FetchLimit         int
 	TargetQueueSize    int
+	SearchKeywords     []string
+	MaxPerKeyword      int
 }
 
 // RunExtractionOnce executa um único ciclo de extração e retorna quantos produtos foram adicionados.
 func RunExtractionOnce(shopeeClient *shopee.Client, telegramClient *telegram.Client, q *queue.Queue, cfg ExtractorConfig, log *slog.Logger) int {
-	totalAdded, totalSkipped := 0, 0
+	maxPerKeyword := cfg.MaxPerKeyword
+	if maxPerKeyword <= 0 {
+		maxPerKeyword = 5
+	}
 
+	if len(cfg.SearchKeywords) == 0 {
+		added, skipped, _ := fetchKeyword(shopeeClient, telegramClient, q, cfg, log, "", cfg.TargetQueueSize)
+		log.Info("extractor: ciclo concluído", "adicionados", added, "ignorados", skipped)
+		return added
+	}
+
+	totalAdded, totalSkipped, totalFiltered := 0, 0, 0
+	keywordsUsed := 0
+
+	for _, keyword := range cfg.SearchKeywords {
+		if totalAdded >= cfg.TargetQueueSize {
+			break
+		}
+
+		limit := maxPerKeyword
+		if remaining := cfg.TargetQueueSize - totalAdded; remaining < limit {
+			limit = remaining
+		}
+
+		added, skipped, filtered := fetchKeyword(shopeeClient, telegramClient, q, cfg, log, keyword, limit)
+		log.Info("extractor: keyword concluída", "keyword", keyword, "adicionados", added)
+
+		totalAdded += added
+		totalSkipped += skipped
+		totalFiltered += filtered
+		if added > 0 {
+			keywordsUsed++
+		}
+	}
+
+	log.Info("extractor: ciclo concluído",
+		"keywords_usadas", keywordsUsed,
+		"adicionados", totalAdded,
+		"ignorados", totalSkipped,
+		"filtrados", totalFiltered,
+	)
+	return totalAdded
+}
+
+// fetchKeyword percorre páginas para uma keyword (ou sem keyword se vazia) e enfileira até maxAdd produtos.
+// Retorna (adicionados, ignorados, filtrados).
+// ignorados = vistos antes ou já na fila. filtrados = não processados por ter atingido o limite.
+func fetchKeyword(shopeeClient *shopee.Client, telegramClient *telegram.Client, q *queue.Queue, cfg ExtractorConfig, log *slog.Logger, keyword string, maxAdd int) (added, skipped, filtered int) {
 	for page := 1; page <= maxPages; page++ {
-		products, hasNextPage, err := shopeeClient.FetchPage(cfg.FilterConfig, cfg.FetchLimit, page)
+		products, hasNextPage, err := shopeeClient.FetchPage(cfg.FilterConfig, cfg.FetchLimit, page, keyword)
 		if err != nil {
-			log.Error("extractor: FetchPage", "page", page, "err", err)
+			log.Error("extractor: FetchPage", "keyword", keyword, "page", page, "err", err)
 			break
 		}
 
 		for _, p := range products {
-			if totalAdded >= cfg.TargetQueueSize {
+			if added >= maxAdd {
+				filtered += len(products) // conta restantes da página como filtrados
 				break
 			}
 
@@ -40,7 +91,7 @@ func RunExtractionOnce(shopeeClient *shopee.Client, telegramClient *telegram.Cli
 					log.Error("extractor: IsSeenItem", "item_id", p.ItemID, "err", err)
 				} else if seen {
 					log.Debug("extractor: skip itemId já visto", "item_id", p.ItemID)
-					totalSkipped++
+					skipped++
 					continue
 				}
 			}
@@ -62,7 +113,7 @@ func RunExtractionOnce(shopeeClient *shopee.Client, telegramClient *telegram.Cli
 				continue
 			}
 			if !inserted {
-				totalSkipped++
+				skipped++
 				continue
 			}
 
@@ -71,44 +122,73 @@ func RunExtractionOnce(shopeeClient *shopee.Client, telegramClient *telegram.Cli
 					log.Warn("extractor: MarkSeenItem", "item_id", p.ItemID, "err", err)
 				}
 			}
-			totalAdded++
+			added++
 
-			// Busca o ID gerado pelo banco para usar nos botões do Telegram.
 			saved, err := q.GetByOfferLink(p.OfferLink)
 			if err != nil || saved == nil {
 				log.Error("extractor: GetByOfferLink", "offer_link", p.OfferLink, "err", err)
 				continue
 			}
 
-			msgID, err := telegramClient.SendProductForReview(*saved)
+			msgID, err := sendWithRetry(telegramClient, *saved, log)
 			if err != nil {
-				log.Error("extractor: SendProductForReview", "title", p.ProductName, "err", err)
+				log.Warn("extractor: produto descartado após 3 tentativas", "title", p.ProductName, "err", err)
 				continue
 			}
 			if err := q.SetTelegramMessageID(saved.ID, msgID); err != nil {
 				log.Warn("extractor: SetTelegramMessageID", "id", saved.ID, "err", err)
 			}
 			log.Info("extractor: produto enviado pro Telegram", "title", p.ProductName, "id", saved.ID)
-			time.Sleep(2500 * time.Millisecond)
+			time.Sleep(500 * time.Millisecond)
 		}
 
-		log.Info("extractor: página processada",
-			"page", page,
-			"adicionados_acumulado", totalAdded,
-			"target", cfg.TargetQueueSize,
-		)
-
-		if totalAdded >= cfg.TargetQueueSize || !hasNextPage {
-			log.Info("extractor: ciclo concluído",
-				"páginas_usadas", page,
-				"adicionados", totalAdded,
-				"ignorados", totalSkipped,
-			)
+		if added >= maxAdd || !hasNextPage {
 			break
 		}
 	}
+	return added, skipped, filtered
+}
 
-	return totalAdded
+// sendWithRetry tenta SendProductForReview até 3 vezes.
+// Em caso de Too Many Requests, dorme o tempo indicado pelo Telegram + 1s antes de tentar novamente.
+func sendWithRetry(client *telegram.Client, p queue.Product, log *slog.Logger) (int, error) {
+	const maxAttempts = 3
+	var lastErr error
+	for attempt := range maxAttempts {
+		msgID, err := client.SendProductForReview(p)
+		if err == nil {
+			return msgID, nil
+		}
+		lastErr = err
+
+		if secs := retryAfterSeconds(err.Error()); secs > 0 {
+			wait := time.Duration(secs+1) * time.Second
+			log.Warn("extractor: rate limit Telegram, aguardando", "attempt", attempt+1, "wait_seconds", secs+1)
+			time.Sleep(wait)
+		}
+	}
+	return 0, lastErr
+}
+
+// retryAfterSeconds extrai o número de segundos de um erro "Too Many Requests: retry after X".
+// Retorna 0 se o erro não for desse tipo.
+func retryAfterSeconds(errMsg string) int {
+	const marker = "retry after "
+	idx := strings.Index(errMsg, marker)
+	if idx == -1 {
+		return 0
+	}
+	rest := errMsg[idx+len(marker):]
+	// pega apenas os dígitos iniciais
+	end := strings.IndexFunc(rest, func(r rune) bool { return r < '0' || r > '9' })
+	if end != -1 {
+		rest = rest[:end]
+	}
+	secs, err := strconv.Atoi(rest)
+	if err != nil {
+		return 0
+	}
+	return secs
 }
 
 func RunExtractor(shopeeClient *shopee.Client, telegramClient *telegram.Client, q *queue.Queue, cfg ExtractorConfig, log *slog.Logger) {

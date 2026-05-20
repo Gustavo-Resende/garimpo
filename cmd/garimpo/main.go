@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -73,6 +74,15 @@ func main() {
 	sheetsSpreadsheetID  := os.Getenv("GOOGLE_SHEETS_ID")
 	dbPath               := mustEnv("DB_PATH")
 
+	var searchKeywords []string
+	if raw := os.Getenv("SEARCH_KEYWORDS"); raw != "" {
+		for _, kw := range strings.Split(raw, ",") {
+			if kw = strings.TrimSpace(kw); kw != "" {
+				searchKeywords = append(searchKeywords, kw)
+			}
+		}
+	}
+
 	minCommission   := envFloat("MIN_COMMISSION", 0.08)
 	maxCommission   := envFloat("MAX_COMMISSION", 0.40)
 	minSales        := envInt("MIN_SALES", 500)
@@ -124,8 +134,10 @@ func main() {
 			MinRating:     minRating,
 		},
 		ExtractionInterval: time.Duration(extractionHours) * time.Hour,
-		FetchLimit:      envInt("SHOPEE_PRODUCT_LIMIT", 50),
-		TargetQueueSize: targetQueueSize,
+		FetchLimit:         envInt("SHOPEE_PRODUCT_LIMIT", 50),
+		TargetQueueSize:    targetQueueSize,
+		SearchKeywords:     searchKeywords,
+		MaxPerKeyword:      envInt("MAX_PER_KEYWORD", 5),
 	}
 	posterCfg := worker.PosterConfig{
 		MinInterval: time.Duration(postingMinMin) * time.Minute,
@@ -152,7 +164,7 @@ func main() {
 	telegramHandler := telegram.NewHandler(telegramClient, shopeeClient, q, sheetsClient, geminiClient, log, onExtract, n8nWebhookURL)
 
 	go worker.RunExtractor(shopeeClient, telegramClient, q, extractorCfg, log)
-	go worker.RunPoster(q, geminiClient, evolutionClient, telegramClient, posterCfg, log)
+	go worker.RunPoster(q, evolutionClient, telegramClient, posterCfg, log)
 	go telegramHandler.Run(ctx)
 
 	<-ctx.Done()

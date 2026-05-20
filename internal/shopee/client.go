@@ -146,14 +146,23 @@ func hasValidShopType(shopType []int) bool {
 
 const maxAPILimit = 50
 
-func (c *Client) FetchPage(cfg FilterConfig, limit, page int) (nodes []ProductNode, hasNextPage bool, err error) {
+func (c *Client) FetchPage(cfg FilterConfig, limit, page int, keyword string) (nodes []ProductNode, hasNextPage bool, err error) {
 	if limit > maxAPILimit {
 		limit = maxAPILimit
 	}
-	query := fmt.Sprintf(
-		`{"query":"{ productOfferV2(sortType: 2, page: %d, limit: %d) { nodes { itemId productName productLink offerLink imageUrl priceMin priceMax priceDiscountRate sales ratingStar commissionRate commission shopName shopType } pageInfo { page limit hasNextPage } } }"}`,
-		page, limit,
-	)
+
+	var query string
+	if keyword == "" {
+		query = fmt.Sprintf(
+			`{"query":"{ productOfferV2(sortType: 2, page: %d, limit: %d) { nodes { itemId productName productLink offerLink imageUrl priceMin priceMax priceDiscountRate sales ratingStar commissionRate commission shopName shopType } pageInfo { page limit hasNextPage } } }"}`,
+			page, limit,
+		)
+	} else {
+		query = fmt.Sprintf(
+			`{"query":"{ productOfferV2(sortType: 2, keyword: \"%s\", page: %d, limit: %d) { nodes { itemId productName productLink offerLink imageUrl priceMin priceMax priceDiscountRate sales ratingStar commissionRate commission shopName shopType } pageInfo { page limit hasNextPage } } }"}`,
+			keyword, page, limit,
+		)
+	}
 
 	var lastErr error
 	for range 3 {
